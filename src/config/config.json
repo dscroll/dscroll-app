@@ -1,0 +1,147 @@
+{
+    "api": {
+        "chain_name": "Base"
+    },
+    "ui_labels": {
+        "hero_headline": "Sub-name Whois Lookup",
+        "hero_description": "Search for web3 names to view it's ownership, status, and registration details.",
+        "search_placeholder": "Search name",
+        "search_examples": [
+            "test@eth",
+            "test@btc",
+            "test@base",
+            "test@crypto"
+        ],
+        "lookup_result_label": "Lookup Result",
+        "discovery_results_label": "Discovery Results",
+        "example_label": "Example Sub-names:",
+        "search_button": "Check"
+    },
+
+    "whois_modal_ui": {
+        "registered": "Registered",
+        "inactive": "Inactive",
+        "not_supported": "Not Supported",
+        "locked": "Locked",
+        "available": "Available",
+        "scanning_text": "Scanning all supported TLDs...",
+        "whois_button": "Whois",
+        "unsupported_button": "Unsupported",
+        "mint_button": "Mint",
+        "subname_label": "SUB-NAME",
+        "owner_label": "Owner Address",
+        "copy_button": "Copy",
+        "back_to_all": "Back to All",
+        "tld_not_supported_title": "TLD Not Supported",
+        "subname_available_title": "Sub-name is Available!",
+        "tld_not_supported_desc": "This TLD is not registered on the current network. Please try a different network or TLD.",
+        "subname_available_desc": "This sub-name has not been minted yet. Claim it now to secure your identity!"
+    },
+    "dashboard_ui": {
+        "title": "Dashboard",
+        "description": "Manage your owned sub-names across blockchains",
+        "refresh_button": "Refresh",
+        "primary_identity": {
+            "label": "Primary Identity",
+            "description": "Your on-chain profile",
+            "not_set": "Not Set",
+            "active": "ACTIVE",
+            "configure_description": "Configure in management page"
+        },
+        "wallet_not_connected": {
+            "title": "Wallet Not Connected",
+            "description": "Please connect your wallet to view your Dashboard"
+        },
+        "no_names_found": {
+            "title": "No Sub-names Found",
+            "description": "You don't own any sub-names on this network yet."
+        },
+        "manage_button": "Manage",
+        "error_state": {
+            "title": "Something went wrong",
+            "try_again": "Try Again",
+            "refresh_page": "Refresh Page"
+        }
+    },
+    "airdrop_ui": {
+        "namespaces_label": "NAMESPACES",
+        "no_tlds_found": "No TLDs found",
+        "create_button": "Create Airdrop",
+        "tabs": {
+            "unclaimed": "Unclaimed",
+            "claimed": "Claimed",
+            "withdrawn": "Withdrawn"
+        },
+        "sync": {
+            "button": "Sync Domains",
+            "banner": "Ownership record for needs synchronization before claiming.",
+            "now": "Sync Now",
+            "dialog_title": "Sync Domain Ownership",
+            "dialog_proceed": "Proceed to Sync"
+        },
+        "scanning_text": "Scanning TLD for rewards...",
+        "view_details": "View Details",
+        "empty_states": {
+            "unclaimed": "You've claimed all available rewards for this TLD!",
+            "claimed": "You haven't claimed any rewards yet.",
+            "withdrawn": "No withdrawn campaigns found."
+        },
+        "claim_all": "Claim All Rewards",
+        "claim_now": "Claim Now",
+        "already_claimed": "Already Claimed",
+        "how_to_claim": "How to claim?"
+    },
+    "common_ui": {
+        "wrong_network": {
+            "title": "Wrong Network",
+            "description": "You are connected to an unsupported network. Please switch to a supported one to continue.",
+            "switch_button": "Switch to"
+        }
+    },
+    "domains": [
+        {
+            "tld": "eth",
+            "title": "Ethereum Name",
+            "description": "Exclusive Ethereum Name for the Web3 ecosystem. Claim your unique identity on the Ethereum namespace.",
+            "nft_image": "/nft_eth.jpg",
+            "external_url": "https://dscroll.com",
+            "cost": "0.0012",
+            "erc20_addr": "",
+            "erc20_name": "",
+            "decimals": 0
+        },
+        {
+            "tld": "btc",
+            "title": "Bitcoin Name",
+            "description": "Exclusive Bitcoin Name for the Web3 ecosystem. Claim your unique identity on the Bitcoin namespace.",
+            "nft_image": "/nft_btc.jpg",
+            "external_url": "https://dscroll.com",
+            "cost": "1.0",
+            "erc20_addr": "",
+            "erc20_name": "",
+            "decimals": 0
+        },
+        {
+            "tld": "base",
+            "title": "Base Name",
+            "description": "Exclusive Base Name for the Web3 ecosystem. Claim your unique identity on the Base namespace.",
+            "nft_image": "/nft_base.jpg",
+            "external_url": "https://dscroll.com",
+            "cost": "0.0022",
+            "erc20_addr": "",
+            "erc20_name": "",
+            "decimals": 0
+        },
+        {
+            "tld": "crypto",
+            "title": "Crypto Name",
+            "description": "Exclusive Crypto Name for the Web3 ecosystem. Claim your unique identity on the Crypto namespace.",
+            "nft_image": "/nft_crypto.jpg",
+            "external_url": "https://dscroll.com",
+            "cost": "0.0022",
+            "erc20_addr": "",
+            "erc20_name": "",
+            "decimals": 0
+        }
+    ]
+}
