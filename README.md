@@ -1,4 +1,4 @@
-# DScroll Name — White-Label TLD dApp
+# DScroll — White-Label TLD dApp
 
 A fully white-label, production-ready Web3 dApp for managing and minting sub-names under any Top-Level Domain (TLD) on the blockchain. Powered by the [ODude SDK](https://www.npmjs.com/package/@odude/odude-sdk), this app gives TLD owners **complete control** over their namespace — branding, pricing, chains, airdrop, and metadata.
 
