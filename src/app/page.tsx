@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Box,
   Heading,
@@ -31,6 +31,7 @@ import {
   AlertDescription,
   Progress,
   useToast,
+  Flex,
 } from "@chakra-ui/react";
 import { useAccount, useChainId, useConnectorClient } from "wagmi";
 import {
@@ -83,6 +84,7 @@ export default function HomePage() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const toast = useToast();
   const router = useRouter();
+  const searchCancelledRef = useRef(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -303,16 +305,31 @@ export default function HomePage() {
     setMintStep("idle");
     setMintError(null);
     setMintTxHash(null);
+    searchCancelledRef.current = false;
 
     try {
       if (query.includes('@')) {
         // Single search logic
         setIsBulkSearch(false);
         try {
-          const nameData = await sdk.getNameDetails(query);
           const tld = query.split("@").pop();
           if (!tld) throw new Error("Invalid domain format");
 
+          const network = sdk.getNetworkForTLD(tld);
+          const exists = await sdk.resolver(network).nameExists(query);
+          
+          let nameData = null;
+          if (exists) {
+            const registry = sdk.registry(network);
+            const tokenId = await registry.getTokenId(query);
+            const owner = await registry.ownerOf(tokenId);
+            nameData = {
+              name: query,
+              tokenId: tokenId.toString(),
+              owner: owner,
+              exists: true
+            };
+          }
 
           const tldData = await sdk.getTldInfo(tld);
           const tldPrice = tldData?.getTLDPrice || BigInt(0);
@@ -344,7 +361,9 @@ export default function HomePage() {
           const isTldNotFound = err?.message?.includes("TLD: Not found");
           setResult({ name: query, isMinted: false, tldNotFound: isTldNotFound });
         }
-        onOpen();
+        if (!searchCancelledRef.current) {
+          onOpen();
+        }
       } else {
         // Bulk search logic
         setIsBulkSearch(true);
@@ -353,28 +372,53 @@ export default function HomePage() {
         
         const results = [];
         for (const tldInfo of config.domains) {
+          if (searchCancelledRef.current) break;
+
           const subname = `${query}@${tldInfo.tld}`;
           let isMinted = false;
           let details = null;
           
           try {
-            details = await sdk.getNameDetails(subname);
-            isMinted = !!(details && details.exists);
+            // First check if it exists using resolver.nameExists to avoid rate-limiting reverts!
+            const network = sdk.getNetworkForTLD(tldInfo.tld);
+            const exists = await sdk.resolver(network).nameExists(subname);
+            
+            if (exists && !searchCancelledRef.current) {
+              const registry = sdk.registry(network);
+              const tokenId = await registry.getTokenId(subname);
+              const owner = await registry.ownerOf(tokenId);
+              
+              details = {
+                name: subname,
+                tokenId: tokenId.toString(),
+                owner: owner,
+                exists: true
+              };
+              isMinted = true;
+            } else {
+              isMinted = false;
+            }
           } catch (e) {
+            console.error("Error checking name details in bulk search:", e);
             isMinted = false;
           }
 
           let isLocked = false;
           let tldOwner = "N/A";
           let tldNotFound = false;
-          try {
-            const tldData = await sdk.getTldInfo(tldInfo.tld);
-            isLocked = (tldData?.getTLDPrice || BigInt(0)) === BigInt(1982);
-            tldOwner = tldData?.getTLDOwner || "N/A";
-          } catch (e: any) {
-            console.error("Error fetching TLD info for", tldInfo.tld, e);
-            tldNotFound = e?.message?.includes("TLD: Not found");
+          
+          if (!searchCancelledRef.current) {
+            try {
+              const tldData = await sdk.getTldInfo(tldInfo.tld);
+              isLocked = (tldData?.getTLDPrice || BigInt(0)) === BigInt(1982);
+              tldOwner = tldData?.getTLDOwner || "N/A";
+            } catch (e: any) {
+              console.error("Error fetching TLD info for", tldInfo.tld, e);
+              tldNotFound = e?.message?.includes("TLD: Not found");
+            }
           }
+
+          if (searchCancelledRef.current) break;
 
           results.push({
             tld: tldInfo.tld,
@@ -389,16 +433,21 @@ export default function HomePage() {
             tldNotFound
           });
         }
-        setBulkResults(results);
-        setBulkLoading(false);
+        
+        if (!searchCancelledRef.current) {
+          setBulkResults(results);
+          setBulkLoading(false);
+        }
       }
     } catch (err) {
-      const handledError = handleSDKError(err, "searching");
-
-
-      setError(handledError.message);
+      if (!searchCancelledRef.current) {
+        const handledError = handleSDKError(err, "searching");
+        setError(handledError.message);
+      }
     } finally {
-      setLoading(false);
+      if (!searchCancelledRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -411,6 +460,11 @@ export default function HomePage() {
 
   const handleModalClose = () => {
     if (mintStep === "pending" || mintStep === "signing" || isApproving) return; // block close during tx
+    
+    searchCancelledRef.current = true;
+    setLoading(false);
+    setBulkLoading(false);
+
     setMintStep("idle");
     setMintError(null);
     setMintTxHash(null);
@@ -617,7 +671,15 @@ export default function HomePage() {
           ) : null}
         </Box>
 
-        <HStack spacing={4} opacity={0.6}>
+        <Flex
+          gap={2}
+          align="center"
+          justify="center"
+          wrap="wrap"
+          opacity={0.8}
+          maxW="full"
+          px={4}
+        >
           <Text fontSize="xs" fontWeight="600" color={mutedText}>{config.ui_labels.example_label}</Text>
           {config.ui_labels.search_examples.map((ext) => (
             <Badge
@@ -635,7 +697,7 @@ export default function HomePage() {
             </Badge>
           ))}
 
-        </HStack>
+        </Flex>
       </VStack>
 
       {/* ─── Result Modal ─────────────────────────────────────────────── */}

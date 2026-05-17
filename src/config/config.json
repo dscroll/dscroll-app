@@ -17,7 +17,6 @@
         "example_label": "Example Sub-names:",
         "search_button": "Check"
     },
-
     "whois_modal_ui": {
         "registered": "Registered",
         "inactive": "Inactive",
@@ -105,7 +104,7 @@
             "description": "Exclusive Ethereum Name for the Web3 ecosystem. Claim your unique identity on the Ethereum namespace.",
             "nft_image": "/nft_eth.jpg",
             "external_url": "https://dscroll.com",
-            "cost": "0.0012",
+            "cost": "($5) 0.0025",
             "erc20_addr": "",
             "erc20_name": "",
             "decimals": 0
@@ -116,7 +115,7 @@
             "description": "Exclusive Bitcoin Name for the Web3 ecosystem. Claim your unique identity on the Bitcoin namespace.",
             "nft_image": "/nft_btc.jpg",
             "external_url": "https://dscroll.com",
-            "cost": "1.0",
+            "cost": "($10) 0.005",
             "erc20_addr": "",
             "erc20_name": "",
             "decimals": 0
@@ -127,7 +126,7 @@
             "description": "Exclusive Base Name for the Web3 ecosystem. Claim your unique identity on the Base namespace.",
             "nft_image": "/nft_base.jpg",
             "external_url": "https://dscroll.com",
-            "cost": "0.0022",
+            "cost": "($2) 0.001",
             "erc20_addr": "",
             "erc20_name": "",
             "decimals": 0
@@ -138,10 +137,10 @@
             "description": "Exclusive Crypto Name for the Web3 ecosystem. Claim your unique identity on the Crypto namespace.",
             "nft_image": "/nft_crypto.jpg",
             "external_url": "https://dscroll.com",
-            "cost": "0.0022",
+            "cost": "($1) 0.00050",
             "erc20_addr": "",
             "erc20_name": "",
             "decimals": 0
         }
     ]
-}
+}
