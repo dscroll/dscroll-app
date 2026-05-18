@@ -53,7 +53,7 @@ import { formatEther, formatUnits, BrowserProvider, Contract } from "ethers";
 import Web3PageContainer from "@/components/Web3PageContainer";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { shortenAddress } from "@/utils/web3";
+import { shortenAddress, isChainSupported } from "@/utils/web3";
 
 interface TldResult {
   name: string;
@@ -368,13 +368,36 @@ export default function HomePage() {
         // Bulk search logic
         setIsBulkSearch(true);
         setBulkLoading(true);
+        
+        // Initialize bulkResults with all domains in pending state
+        const initialResults = config.domains.map(tldInfo => ({
+          tld: tldInfo.tld,
+          title: tldInfo.title,
+          subname: `${query}@${tldInfo.tld}`,
+          status: "pending", // "pending" | "checking" | "completed" | "error"
+          isMinted: false,
+          cost: tldInfo.cost,
+          currency: tldInfo.erc20_name ? `$${tldInfo.erc20_name}` : "ETH",
+          details: null,
+          isLocked: false,
+          tldOwner: "N/A",
+          tldNotFound: false
+        }));
+        setBulkResults(initialResults);
         onOpen();
         
-        const results = [];
         for (const tldInfo of config.domains) {
           if (searchCancelledRef.current) break;
 
           const subname = `${query}@${tldInfo.tld}`;
+          
+          // Set status of current TLD to "checking"
+          setBulkResults(prev =>
+            prev.map(item =>
+              item.tld === tldInfo.tld ? { ...item, status: "checking" } : item
+            )
+          );
+          
           let isMinted = false;
           let details = null;
           
@@ -420,22 +443,23 @@ export default function HomePage() {
 
           if (searchCancelledRef.current) break;
 
-          results.push({
-            tld: tldInfo.tld,
-            title: tldInfo.title,
-            subname,
-            isMinted,
-            cost: tldInfo.cost,
-            currency: tldInfo.erc20_name ? `$${tldInfo.erc20_name}` : "ETH",
-            details,
-            isLocked,
-            tldOwner,
-            tldNotFound
-          });
+          // Update status to "completed"
+          setBulkResults(prev =>
+            prev.map(item =>
+              item.tld === tldInfo.tld ? {
+                ...item,
+                status: "completed",
+                isMinted,
+                details,
+                isLocked,
+                tldOwner,
+                tldNotFound
+              } : item
+            )
+          );
         }
         
         if (!searchCancelledRef.current) {
-          setBulkResults(results);
           setBulkLoading(false);
         }
       }
@@ -732,93 +756,178 @@ export default function HomePage() {
 
           <ModalBody pb={6}>
             {isBulkSearch ? (
-              <VStack align="stretch" spacing={4}>
-                {bulkLoading ? (
-                  <VStack py={10} spacing={4}>
-                    <Spinner size="xl" thickness="4px" speed="0.65s" emptyColor="gray.200" color="brand.400" />
-                    <Text fontWeight="600" color={mutedText}>Scanning all supported TLDs...</Text>
-
-
+              <VStack align="stretch" spacing={5}>
+                {bulkLoading && (
+                  <VStack py={4} px={5} spacing={3} align="stretch" w="full" bg={cardBg} borderRadius="2xl" border="1px solid" borderColor={searchBorder}>
+                    <HStack justify="space-between" align="center">
+                      <HStack spacing={3}>
+                        <Spinner size="xs" thickness="2px" speed="0.65s" emptyColor="gray.200" color="brand.400" />
+                        <Text fontWeight="700" fontSize="xs" letterSpacing="0.05em" textTransform="uppercase">
+                          {(() => {
+                            const checkingItem = bulkResults.find(r => r.status === "checking");
+                            return checkingItem ? `Scanning: ${checkingItem.subname}` : "Scanning TLDs...";
+                          })()}
+                        </Text>
+                      </HStack>
+                      <Text fontSize="xs" fontWeight="700" color={mutedText}>
+                        {bulkResults.filter(r => r.status === "completed").length} / {bulkResults.length} TLDs Checked
+                      </Text>
+                    </HStack>
+                    <Progress
+                      value={(bulkResults.filter(r => r.status === "completed").length / bulkResults.length) * 100}
+                      size="xs"
+                      colorScheme="blue"
+                      borderRadius="full"
+                      isAnimated
+                      hasStripe
+                    />
                   </VStack>
-                ) : (
-                  <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                    {bulkResults.map((res) => (
-                      <Box 
-                        key={res.subname} 
-                        p={5} 
-                        borderRadius="2xl" 
-                        bg={cardBg} 
-                        border="1px solid" 
-                        borderColor={res.isMinted ? searchBorder : "green.300"}
-                        transition="all 0.2s"
-                        _hover={{ transform: "translateY(-2px)", boxShadow: "sm", borderColor: "brand.400" }}
-                      >
-                        <HStack justify="space-between" mb={3}>
-                          <VStack align="start" spacing={0}>
-                            <Text fontSize="md" fontWeight="800" color="brand.500" mb={0}>{res.subname}</Text>
-                            <Text fontSize="xs" fontWeight="600" color={mutedText} mt={-0.5} mb={2}>{res.title}</Text>
-                            <HStack spacing={1}>
-                              <Text fontSize="xs" fontWeight="700" color={res.isLocked ? "red.400" : mutedText}>
-                                {res.isLocked ? "LOCKED" : `${res.cost} ${res.currency}`}
-                              </Text>
-                            </HStack>
-                          </VStack>
-                          <Badge 
-                            variant="subtle" 
-                            colorScheme={res.isMinted ? "orange" : (res.tldNotFound ? "gray" : (res.isLocked ? "red" : "green"))}
-                            borderRadius="lg"
-                            px={2}
-                          >
-                            {res.isMinted ? "Registered" : (res.tldNotFound ? "Not Supported" : (res.isLocked ? "Locked" : "Available"))}
-
-                          </Badge>
-
-                        </HStack>
-                        
-                        <Button
-                          size="md"
-                          w="full"
-                          borderRadius="xl"
-                          leftIcon={res.isMinted ? <FiSearch /> : <FiPlusCircle />}
-                          variant={res.isMinted ? "outline" : "solid"}
-                          bgGradient={res.isMinted ? "none" : (res.tldNotFound ? "none" : (res.isLocked ? "linear(to-r, gray.400, gray.500)" : "linear(to-r, green.400, teal.500)"))}
-                          color={res.isMinted ? "inherit" : "white"}
-                          _hover={res.isMinted ? { bg: "whiteAlpha.100" } : { opacity: 0.9 }}
-                          isDisabled={(res.tldNotFound) || (!res.isMinted && res.isLocked && (!address || address.toLowerCase() !== res.tldOwner?.toLowerCase()))}
-                          onClick={() => {
-                            if (res.isMinted) {
-                              setIsBulkSearch(false);
-                              setResult({
-                                name: res.subname,
-                                tokenId: res.details?.tokenId?.toString(),
-                                owner: res.details?.owner || "N/A",
-                                price: "N/A",
-                                commission: "N/A",
-                                isActive: true,
-                                isMinted: true,
-                                isLocked: res.isLocked,
-                                tldOwner: res.tldOwner,
-                              });
-                            } else {
-                              setIsBulkSearch(false);
-                              setResult({ 
-                                name: res.subname, 
-                                isMinted: false,
-                                isLocked: res.isLocked,
-                                tldOwner: res.tldOwner,
-                                tldNotFound: res.tldNotFound
-                              });
-                            }
-                          }}
-                        >
-                          {res.isMinted ? "Whois" : (res.tldNotFound ? "Unsupported" : "Mint")}
-
-                        </Button>
-
-                      </Box>
-                    ))}
-                  </SimpleGrid>
                 )}
+                
+                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                  {bulkResults.map((res) => (
+                    <Box 
+                      key={res.subname} 
+                      p={5} 
+                      borderRadius="2xl" 
+                      bg={cardBg} 
+                      border="1px solid" 
+                      borderColor={
+                        res.status === "checking"
+                          ? "brand.400"
+                          : res.status === "pending"
+                          ? searchBorder
+                          : res.isMinted
+                          ? searchBorder
+                          : "green.300"
+                      }
+                      opacity={res.status === "pending" ? 0.6 : 1}
+                      transition="all 0.2s"
+                      _hover={res.status === "completed" ? { transform: "translateY(-2px)", boxShadow: "sm", borderColor: "brand.400" } : {}}
+                    >
+                      <HStack justify="space-between" mb={3}>
+                        <VStack align="start" spacing={0}>
+                          <Text fontSize="md" fontWeight="800" color="brand.500" mb={0}>{res.subname}</Text>
+                          <Text fontSize="xs" fontWeight="600" color={mutedText} mt={-0.5} mb={2}>{res.title}</Text>
+                          <HStack spacing={1}>
+                            <Text fontSize="xs" fontWeight="700" color={res.isLocked ? "red.400" : mutedText}>
+                              {res.status === "pending" || res.status === "checking"
+                                ? "Checking..."
+                                : res.isLocked
+                                ? "LOCKED"
+                                : `${res.cost} ${res.currency}`}
+                            </Text>
+                          </HStack>
+                        </VStack>
+                        <Badge 
+                          variant="subtle" 
+                          colorScheme={
+                            res.status === "pending"
+                              ? "gray"
+                              : res.status === "checking"
+                              ? "blue"
+                              : res.isMinted
+                              ? "orange"
+                              : res.tldNotFound
+                              ? "gray"
+                              : res.isLocked
+                              ? "red"
+                              : "green"
+                          }
+                          borderRadius="lg"
+                          px={2}
+                        >
+                          {
+                            res.status === "pending"
+                              ? "Pending"
+                              : res.status === "checking"
+                              ? "Scanning..."
+                              : res.isMinted
+                              ? "Registered"
+                              : res.tldNotFound
+                              ? "Not Supported"
+                              : res.isLocked
+                              ? "Locked"
+                              : "Available"
+                          }
+                        </Badge>
+                      </HStack>
+                      
+                      <Button
+                        size="md"
+                        w="full"
+                        borderRadius="xl"
+                        leftIcon={
+                          res.status === "checking" ? (
+                            <Spinner size="xs" />
+                          ) : res.isMinted ? (
+                            <FiSearch />
+                          ) : (
+                            <FiPlusCircle />
+                          )
+                        }
+                        variant={res.isMinted ? "outline" : "solid"}
+                        bgGradient={
+                          res.status === "pending" || res.status === "checking"
+                            ? "none"
+                            : res.isMinted
+                            ? "none"
+                            : res.tldNotFound
+                            ? "none"
+                            : res.isLocked
+                            ? "linear(to-r, gray.400, gray.500)"
+                            : "linear(to-r, green.400, teal.500)"
+                        }
+                        color={res.isMinted ? "inherit" : "white"}
+                        _hover={res.status === "completed" ? (res.isMinted ? { bg: "whiteAlpha.100" } : { opacity: 0.9 }) : {}}
+                        isDisabled={
+                          res.status !== "completed" ||
+                          res.tldNotFound ||
+                          (!res.isMinted && res.isLocked && (!address || address.toLowerCase() !== res.tldOwner?.toLowerCase()))
+                        }
+                        onClick={() => {
+                          if (res.isMinted) {
+                            setIsBulkSearch(false);
+                            setResult({
+                              name: res.subname,
+                              tokenId: res.details?.tokenId?.toString(),
+                              owner: res.details?.owner || "N/A",
+                              price: "N/A",
+                              commission: "N/A",
+                              isActive: true,
+                              isMinted: true,
+                              isLocked: res.isLocked,
+                              tldOwner: res.tldOwner,
+                            });
+                          } else {
+                            setIsBulkSearch(false);
+                            setResult({ 
+                              name: res.subname, 
+                              isMinted: false,
+                              isLocked: res.isLocked,
+                              tldOwner: res.tldOwner,
+                              tldNotFound: res.tldNotFound
+                            });
+                          }
+                        }}
+                      >
+                        {
+                          res.status === "pending"
+                            ? "Queue"
+                            : res.status === "checking"
+                            ? "Checking..."
+                            : res.isMinted
+                            ? "Whois"
+                            : res.tldNotFound
+                            ? "Unsupported"
+                            : (!isConnected || !isChainSupported(chainId)
+                            ? "Check Connection"
+                            : "Mint")
+                        }
+                      </Button>
+                    </Box>
+                  ))}
+                </SimpleGrid>
               </VStack>
             ) : result && (
               <Box mb={2}>
@@ -1171,6 +1280,7 @@ export default function HomePage() {
                         isLoading={isApproving}
                         isDisabled={
                           !isConnected ||
+                          !isChainSupported(chainId) ||
                           eligibilityLoading ||
                           mintInProgress ||
                           !spenderAddress ||
@@ -1182,6 +1292,8 @@ export default function HomePage() {
                             ? "Registrar address not resolved — add 'registrar_addr' to config.json for this TLD"
                             : !isConnected
                             ? "Connect wallet to approve"
+                            : !isChainSupported(chainId)
+                            ? "Please switch to a supported network"
                             : (tokenBalance !== null && eligibility !== null && tokenBalance < eligibility.cost)
                             ? "Insufficient token balance to approve"
                             : `Approve ${tokenSymbol} spending`
@@ -1196,7 +1308,7 @@ export default function HomePage() {
                         boxShadow="0 4px 20px rgba(56, 178, 172, 0.35)"
                         _hover={{ opacity: 0.9, transform: "translateY(-1px)" }}
                       >
-                        {isApproving ? "Approving..." : `Approve ${tokenSymbol}`}
+                        {!isConnected || !isChainSupported(chainId) ? "Check Connection" : (isApproving ? "Approving..." : `Approve ${tokenSymbol}`)}
 
 
                       </Button>
@@ -1211,6 +1323,7 @@ export default function HomePage() {
                         isLoading={false}
                         isDisabled={
                           !isConnected ||
+                          !isChainSupported(chainId) ||
                           !eligibility?.eligible ||
                           eligibilityLoading ||
                           mintInProgress ||
@@ -1219,13 +1332,15 @@ export default function HomePage() {
                           (result.isLocked && (!address || address.toLowerCase() !== result.tldOwner?.toLowerCase()))
                         }
                         bgGradient={
-                          !eligibility?.eligible
+                          !isConnected || !isChainSupported(chainId)
+                            ? undefined
+                            : !eligibility?.eligible
                             ? undefined
                             : mintStep === "success"
                             ? "linear(to-r, green.400, teal.400)"
                             : "linear(to-r, green.400, teal.500)"
                         }
-                        colorScheme={!eligibility?.eligible ? "gray" : undefined}
+                        colorScheme={!isConnected || !isChainSupported(chainId) || !eligibility?.eligible ? "gray" : undefined}
                         color="white"
                         borderRadius="xl"
                         px={7}
@@ -1245,6 +1360,8 @@ export default function HomePage() {
                         title={
                           !isConnected
                             ? "Connect wallet to mint"
+                            : !isChainSupported(chainId)
+                            ? "Please switch to a supported network"
                             : !eligibility
                             ? "Checking eligibility..."
                             : !eligibility.eligible
@@ -1253,7 +1370,7 @@ export default function HomePage() {
                         }
 
                       >
-                        {mintStepLabel[mintStep]}
+                        {!isConnected || !isChainSupported(chainId) ? "Check Connection" : mintStepLabel[mintStep]}
                       </Button>
                     )
                   )

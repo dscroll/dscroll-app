@@ -436,7 +436,7 @@ export default function RecordPage({ params }: PageProps) {
                               : useColorModeValue("gray.700", "gray.300")
                             }
                           >
-                            Enable this id@odude Web3 Name into ODude Ecosystem
+                            Enable this {subname} Web3 Name into ODude Ecosystem
                           </Text>
                           {odudeEnabled && (
                             <Badge
