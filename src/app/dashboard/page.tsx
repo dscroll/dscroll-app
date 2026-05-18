@@ -23,7 +23,7 @@ import {
 } from "@chakra-ui/react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount, useChainId, useWalletClient, usePublicClient } from "wagmi";
-import { FiRefreshCw, FiAlertCircle, FiGlobe, FiTag, FiExternalLink, FiUser, FiArrowRight } from "react-icons/fi";
+import { FiRefreshCw, FiAlertCircle, FiGlobe, FiTag, FiExternalLink, FiUser, FiArrowRight, FiClock } from "react-icons/fi";
 import { sdk, initializeSDK, handleSDKError, getODudeNetworkFromChainId, reconnectRPC } from "@/lib/odude";
 import { isSubNameSupported } from "@/utils/domain";
 import config from "@/config/config.json";
@@ -54,6 +54,8 @@ export default function DashboardPage() {
   const [primaryName, setPrimaryName] = useState<string | null>(null);
   const [primaryTokenId, setPrimaryTokenId] = useState<string | null>(null);
   const [isSettingPrimary, setIsSettingPrimary] = useState(false);
+  const [isCached, setIsCached] = useState(false);
+  const [cacheTime, setCacheTime] = useState<string | null>(null);
   const toast = useToast();
 
   // Filter only Sub-names (contains @ sign) and supported TLDs
@@ -62,6 +64,31 @@ export default function DashboardPage() {
 
   const fetchNames = async (isRefresh = false) => {
     if (!address) return;
+
+    // Check if we have cached data first when NOT performing a manual refresh
+    if (!isRefresh) {
+      const cacheKey = `dscroll_dashboard_cache_${address.toLowerCase()}_${chainId}`;
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && Array.isArray(parsed.names)) {
+            setNames(parsed.names);
+            setPrimaryName(parsed.primaryName ?? null);
+            setPrimaryTokenId(parsed.primaryTokenId ?? null);
+            setIsCached(true);
+            if (parsed.updatedAt) {
+              const dateStr = new Date(parsed.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+              setCacheTime(dateStr);
+            }
+            setLoading(false);
+            return;
+          }
+        }
+      } catch (cacheErr) {
+        console.warn("Failed to read from dashboard cache:", cacheErr);
+      }
+    }
 
     if (isRefresh) {
       setRefreshing(true);
@@ -115,17 +142,35 @@ export default function DashboardPage() {
       }
 
       // Fetch Primary Name
+      let fetchedPrimaryName: string | null = null;
+      let fetchedPrimaryTokenId: string | null = null;
       try {
         const reverseRecord = await sdk.resolver().getReverseRecord(address);
         if (reverseRecord && reverseRecord.exists) {
-          setPrimaryName(reverseRecord.primaryName);
-          setPrimaryTokenId(reverseRecord.primaryTokenId.toString());
-        } else {
-          setPrimaryName(null);
-          setPrimaryTokenId(null);
+          fetchedPrimaryName = reverseRecord.primaryName;
+          fetchedPrimaryTokenId = reverseRecord.primaryTokenId.toString();
         }
       } catch (revErr) {
         console.warn("Failed to fetch reverse record:", revErr);
+      }
+
+      setPrimaryName(fetchedPrimaryName);
+      setPrimaryTokenId(fetchedPrimaryTokenId);
+      setIsCached(false);
+      setCacheTime(null);
+
+      // Save to localStorage cache
+      try {
+        const cacheKey = `dscroll_dashboard_cache_${address.toLowerCase()}_${chainId}`;
+        const cacheData = {
+          names: mappedNames,
+          primaryName: fetchedPrimaryName,
+          primaryTokenId: fetchedPrimaryTokenId,
+          updatedAt: Date.now()
+        };
+        localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+      } catch (cacheSaveErr) {
+        console.warn("Failed to save dashboard to cache:", cacheSaveErr);
       }
     } catch (err) {
       console.error("Failed to fetch names:", err);
@@ -142,6 +187,11 @@ export default function DashboardPage() {
       fetchNames();
     } else {
       setLoading(false);
+      setNames([]);
+      setPrimaryName(null);
+      setPrimaryTokenId(null);
+      setIsCached(false);
+      setCacheTime(null);
     }
   }, [isConnected, address, chainId]);
 
@@ -220,12 +270,31 @@ export default function DashboardPage() {
       <VStack spacing={6} align="stretch">
         <Flex justify="space-between" align="flex-end" wrap="wrap" gap={4}>
           <VStack align="start" spacing={2}>
-            <HStack>
+            <HStack align="center" spacing={3}>
               <Icon as={FiGlobe} color="brand.400" boxSize={8} />
               <Heading size="xl" letterSpacing="tight" bgGradient="linear(to-r, brand.400, accent.400)" bgClip="text">
                 {config.dashboard_ui.title}
               </Heading>
-
+              {isCached && (
+                <Tooltip label={cacheTime ? `Loaded from local cache (saved at ${cacheTime}). Click refresh to check for updates.` : "Loaded from local cache. Click refresh to check for updates."}>
+                  <Badge
+                    colorScheme="orange"
+                    variant="subtle"
+                    px={2.5}
+                    py={1}
+                    borderRadius="lg"
+                    fontSize="xs"
+                    fontWeight="bold"
+                    display="inline-flex"
+                    alignItems="center"
+                    gap={1.5}
+                    mt={1}
+                  >
+                    <Icon as={FiClock} boxSize={3.5} />
+                    Cached
+                  </Badge>
+                </Tooltip>
+              )}
             </HStack>
             <Text color="gray.500" fontSize="md" fontWeight="medium">
               {config.dashboard_ui.description}

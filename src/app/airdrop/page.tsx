@@ -21,8 +21,9 @@ import {
   AlertDialogHeader,
   AlertDialogContent,
   AlertDialogOverlay,
+  Tooltip,
 } from "@chakra-ui/react";
-import { useAccount, useWalletClient } from "wagmi";
+import { useAccount, useWalletClient, useChainId } from "wagmi";
 import { 
   FiFolder, 
   FiGift, 
@@ -38,7 +39,7 @@ import {
 import Link from "next/link";
 import { ethers } from "ethers";
 
-import { sdk, initializeSDK, handleSDKError } from "@/lib/odude";
+import { sdk, initializeSDK, handleSDKError, getODudeNetworkFromChainId } from "@/lib/odude";
 import { formatAddress, formatTokenAmount } from "@/utils/format";
 import { executeTransaction } from "@/utils/transaction";
 import Web3PageContainer from "@/components/Web3PageContainer";
@@ -74,6 +75,8 @@ interface AirdropCampaign {
 export default function AirdropPage() {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
+  const chainId = useChainId();
+  const networkKey = getODudeNetworkFromChainId(chainId) || 'basesepolia';
   const toast = useToast();
 
   const [loading, setLoading] = useState(false);
@@ -86,6 +89,8 @@ export default function AirdropPage() {
   const [claiming, setClaiming] = useState<number | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'unclaimed' | 'claimed' | 'withdrawn'>('unclaimed');
+  const [isCached, setIsCached] = useState(false);
+  const [cacheTime, setCacheTime] = useState<string | null>(null);
   
   // Confirmation state
   const { isOpen: isSyncOpen, onOpen: onSyncOpen, onClose: onSyncClose } = useDisclosure();
@@ -96,16 +101,111 @@ export default function AirdropPage() {
   const cancelRef = useRef<any>(null);
 
 
+  // Caching helper: load data from cache
+  const loadCache = () => {
+    if (!address) return false;
+    const cacheKey = `dscroll_airdrop_cache_${address.toLowerCase()}_${chainId}`;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && Array.isArray(parsed.tlds)) {
+          setTlds(parsed.tlds);
+          setUserDomains(parsed.userDomains ?? []);
+          setSelectedTld(parsed.selectedTld ?? (parsed.tlds.length > 0 ? parsed.tlds[0] : null));
+          
+          if (parsed.selectedTld && parsed.airdropsByTld?.[parsed.selectedTld]) {
+            setAirdrops(parsed.airdropsByTld[parsed.selectedTld]);
+          }
+          if (parsed.selectedTld && parsed.syncStatusByTld) {
+            setSyncStatus(parsed.syncStatusByTld);
+          }
+          if (parsed.selectedTld && parsed.isTldOwnerByTld) {
+            setIsTldOwner(!!parsed.isTldOwnerByTld[parsed.selectedTld]);
+          }
+          
+          setIsCached(true);
+          if (parsed.updatedAt) {
+            const dateStr = new Date(parsed.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            setCacheTime(dateStr);
+          }
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to load airdrop cache:", err);
+    }
+    return false;
+  };
+
+  // Caching helper: update cached TLD data
+  const updateAirdropCache = (tld: string, freshAirdrops: AirdropCampaign[], freshSyncStatus?: boolean, freshIsTldOwner?: boolean) => {
+    if (!address) return;
+    const cacheKey = `dscroll_airdrop_cache_${address.toLowerCase()}_${chainId}`;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      let cacheData: any = {
+        tlds,
+        selectedTld: tld,
+        userDomains,
+        airdropsByTld: {},
+        syncStatusByTld: {},
+        isTldOwnerByTld: {},
+        updatedAt: Date.now()
+      };
+      
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed) {
+            cacheData.tlds = tlds.length > 0 ? tlds : parsed.tlds;
+            cacheData.userDomains = userDomains.length > 0 ? userDomains : parsed.userDomains;
+            cacheData.airdropsByTld = parsed.airdropsByTld || {};
+            cacheData.syncStatusByTld = parsed.syncStatusByTld || {};
+            cacheData.isTldOwnerByTld = parsed.isTldOwnerByTld || {};
+          }
+        } catch (_) {}
+      }
+      
+      cacheData.selectedTld = tld;
+      cacheData.airdropsByTld[tld] = freshAirdrops;
+      cacheData.syncStatusByTld[tld] = freshSyncStatus !== undefined ? freshSyncStatus : (syncStatus[tld] ?? false);
+      cacheData.isTldOwnerByTld[tld] = freshIsTldOwner !== undefined ? freshIsTldOwner : isTldOwner;
+      cacheData.updatedAt = Date.now();
+      
+      localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+    } catch (err) {
+      console.warn("Failed to save airdrop cache:", err);
+    }
+  };
+
   // 1. Initial Scan: Get all owned names and extract TLDs
   useEffect(() => {
     if (isConnected && address) {
-      scanWallet();
+      const loaded = loadCache();
+      if (!loaded) {
+        scanWallet(false);
+      }
+    } else {
+      setLoading(false);
+      setTlds([]);
+      setSelectedTld(null);
+      setAirdrops([]);
+      setUserDomains([]);
+      setSyncStatus({});
+      setIsTldOwner(false);
+      setIsCached(false);
+      setCacheTime(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, address]);
 
-  const scanWallet = async () => {
+  const scanWallet = async (bypassCache = false) => {
     setLoading(true);
+    if (bypassCache) {
+      setIsCached(false);
+      setCacheTime(null);
+    }
     try {
       initializeSDK();
       const namesList = await sdk.getNamesList(address!);
@@ -141,6 +241,34 @@ export default function AirdropPage() {
   // 2. Fetch Airdrops when TLD changes
   useEffect(() => {
     if (selectedTld) {
+      const cacheKey = `dscroll_airdrop_cache_${address?.toLowerCase()}_${chainId}`;
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.airdropsByTld?.[selectedTld]) {
+            setAirdrops(parsed.airdropsByTld[selectedTld]);
+            if (parsed.syncStatusByTld) {
+              setSyncStatus(parsed.syncStatusByTld);
+            }
+            if (parsed.isTldOwnerByTld) {
+              setIsTldOwner(!!parsed.isTldOwnerByTld[selectedTld]);
+            }
+            setIsCached(true);
+            if (parsed.updatedAt) {
+              const dateStr = new Date(parsed.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+              setCacheTime(dateStr);
+            }
+            return; // Skip fetch, loaded successfully from cache
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load TLD cache:", err);
+      }
+
+      // If no cache or forced load, perform the fresh fetch
+      setIsCached(false);
+      setCacheTime(null);
       fetchAirdrops(selectedTld);
       checkSyncStatus(selectedTld);
       checkTldOwnership(selectedTld);
@@ -154,7 +282,9 @@ export default function AirdropPage() {
       initializeSDK();
       const tldId = await sdk.tld().getTLDId(tld);
       const owner = await sdk.tld().getTLDOwner(tldId);
-      setIsTldOwner(owner.toLowerCase() === address.toLowerCase());
+      const isOwner = owner.toLowerCase() === address.toLowerCase();
+      setIsTldOwner(isOwner);
+      updateAirdropCache(tld, airdrops, syncStatus[tld] ?? false, isOwner);
     } catch (e) {
       console.error("Failed to check TLD ownership", e);
       setIsTldOwner(false);
@@ -166,16 +296,16 @@ export default function AirdropPage() {
     setAirdrops([]);
     try {
       initializeSDK();
-      const count = await sdk.rwairdrop(tld).getTLDAirdropCount(tld);
+      const count = await sdk.rwairdrop(networkKey).getTLDAirdropCount(tld);
       const airdropIndices = Array.from({ length: Number(count) }, (_, i) => i);
       
       const campaigns = await Promise.all(airdropIndices.map(async (i) => {
-        const info = await sdk.rwairdrop(tld).getAirdropInfoByTLD(tld, i);
+        const info = await sdk.rwairdrop(networkKey).getAirdropInfoByTLD(tld, i);
         
         // Fetch Token Info
         let tokenInfo: TokenInfo | undefined;
         try {
-           const provider = sdk.getProvider('basesepolia'); 
+           const provider = sdk.getProvider(networkKey); 
            const contract = new ethers.Contract(info.tokenAddress, [
              "function symbol() view returns (string)",
              "function decimals() view returns (uint8)",
@@ -198,7 +328,7 @@ export default function AirdropPage() {
         
         await Promise.all(domainsInTld.map(async (domain) => {
           try {
-            const claimed = await sdk.rwairdrop(tld).hasDomainClaimed(domain, i);
+            const claimed = await sdk.rwairdrop(networkKey).hasDomainClaimed(domain, i);
             if (claimed) {
               hasClaimed = true;
             } else {
@@ -232,6 +362,12 @@ export default function AirdropPage() {
       // Sort by createdAt descending (latest first)
       const sortedCampaigns = campaigns.sort((a, b) => b.createdAt - a.createdAt);
       setAirdrops(sortedCampaigns);
+      updateAirdropCache(tld, sortedCampaigns);
+
+      // Successfully finished network fetch, mark as cached
+      setIsCached(true);
+      const dateStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setCacheTime(dateStr);
     } catch (error) {
       console.error("Failed to fetch airdrops:", error);
     } finally {
@@ -242,13 +378,15 @@ export default function AirdropPage() {
   const checkSyncStatus = async (tld: string) => {
     if (!address) return;
     try {
-      const syncedDomains = await sdk.rwairdrop(tld).getUserDomainsInTLD(address, tld);
+      const syncedDomains = await sdk.rwairdrop(networkKey).getUserDomainsInTLD(address, tld);
       const localDomains = userDomains.filter(d => d && d.endsWith(`@${tld}`));
+      const isSynced = localDomains.length > 0 && syncedDomains.length >= localDomains.length;
       
       setSyncStatus(prev => ({
         ...prev,
-        [tld]: localDomains.length > 0 && syncedDomains.length >= localDomains.length
+        [tld]: isSynced
       }));
+      updateAirdropCache(tld, airdrops, isSynced, isTldOwner);
     } catch (e) {
       console.error("Sync check failed", e);
     }
@@ -262,7 +400,7 @@ export default function AirdropPage() {
       initializeSDK();
       const provider = new ethers.BrowserProvider(walletClient!.transport as any);
       const signer = await provider.getSigner();
-      sdk.connectSigner(signer, 'basesepolia');
+      sdk.connectSigner(signer, networkKey);
       
       const localDomains = userDomains.filter(d => d && d.endsWith(`@${selectedTld}`));
       if (localDomains.length === 0) {
@@ -271,7 +409,7 @@ export default function AirdropPage() {
       }
 
       await executeTransaction(
-        (sdk.rwairdrop('basesepolia') as any).syncMyDomains(localDomains),
+        (sdk.rwairdrop(networkKey) as any).syncMyDomains(localDomains),
         toast,
         {
           loadingTitle: "Syncing Domains",
@@ -299,13 +437,13 @@ export default function AirdropPage() {
       initializeSDK();
       const provider = new ethers.BrowserProvider(walletClient!.transport as any);
       const signer = await provider.getSigner();
-      sdk.connectSigner(signer, 'basesepolia');
+      sdk.connectSigner(signer, networkKey);
 
       // Find an eligible domain that hasn't claimed yet
       const domainsInTld = userDomains.filter(d => d && d.endsWith(`@${airdrop.tldName}`));
       let domainToUse = null;
       for (const domain of domainsInTld) {
-        const claimed = await sdk.rwairdrop('basesepolia').hasDomainClaimed(domain, airdrop.id);
+        const claimed = await sdk.rwairdrop(networkKey).hasDomainClaimed(domain, airdrop.id);
         if (!claimed) {
           domainToUse = domain;
           break;
@@ -317,7 +455,7 @@ export default function AirdropPage() {
       onDetailClose(); // Close only after finding domain and being ready to execute
       
       await executeTransaction(
-        (sdk.rwairdrop('basesepolia') as any).claimShare(airdrop.tldName, airdrop.id, domainToUse),
+        (sdk.rwairdrop(networkKey) as any).claimShare(airdrop.tldName, airdrop.id, domainToUse),
         toast,
         {
           loadingTitle: "Claiming Airdrop",
@@ -360,7 +498,7 @@ export default function AirdropPage() {
       initializeSDK();
       const provider = new ethers.BrowserProvider(walletClient!.transport as any);
       const signer = await provider.getSigner();
-      sdk.connectSigner(signer, 'basesepolia');
+      sdk.connectSigner(signer, networkKey);
 
       toast({
         title: "Starting Batch Claim",
@@ -419,7 +557,7 @@ export default function AirdropPage() {
                   icon={<FiDatabase />} 
                   size="xs" 
                   variant="ghost" 
-                  onClick={scanWallet} 
+                  onClick={() => scanWallet(true)} 
                   isLoading={loading}
                   title="Refresh Wallet"
                 />
@@ -460,7 +598,7 @@ export default function AirdropPage() {
           {/* Header & Path */}
           <Box className="content-header">
             <VStack align="flex-start" spacing={1}>
-              <Box className="content-path">
+              <Box className="content-path" display="flex" alignItems="center" flexWrap="wrap">
                 <Icon as={FiDatabase} mr={2} />
                 <span>root</span>
                 <span className="path-separator">/</span>
@@ -469,6 +607,27 @@ export default function AirdropPage() {
                   <>
                     <span className="path-separator">/</span>
                     <span style={{ color: '#fff' }}>{selectedTld}</span>
+                    {isCached && (
+                      <Tooltip label={cacheTime ? `Loaded from local cache (saved at ${cacheTime}). Click refresh to check for updates.` : "Loaded from local cache. Click refresh to check for updates."}>
+                        <Badge
+                          colorScheme="orange"
+                          variant="subtle"
+                          px={2}
+                          py={0.5}
+                          borderRadius="md"
+                          fontSize="10px"
+                          fontWeight="bold"
+                          display="inline-flex"
+                          alignItems="center"
+                          gap={1}
+                          ml={3}
+                          verticalAlign="middle"
+                        >
+                          <Icon as={FiClock} boxSize={2.5} />
+                          Cached
+                        </Badge>
+                      </Tooltip>
+                    )}
                   </>
                 )}
               </Box>
@@ -500,6 +659,25 @@ export default function AirdropPage() {
               </HStack>
             </VStack>
             <HStack spacing={3}>
+               {selectedTld && (
+                 <Button 
+                   leftIcon={loadingAirdrops ? <Spinner size="xs" /> : <FiRefreshCw />} 
+                   size="sm" 
+                   variant="ghost" 
+                   colorScheme="blue" 
+                   onClick={() => {
+                     setIsCached(false);
+                     setCacheTime(null);
+                     fetchAirdrops(selectedTld);
+                     checkSyncStatus(selectedTld);
+                     checkTldOwnership(selectedTld);
+                   }}
+                   isLoading={loadingAirdrops}
+                 >
+                   Refresh
+                 </Button>
+               )}
+
                <Button 
                  leftIcon={<FiRefreshCw />} 
                  size="sm" 
