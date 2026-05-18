@@ -684,7 +684,7 @@ export default function AirdropPage() {
                  variant="ghost" 
                  colorScheme="blue" 
                  onClick={onSyncOpen}
-                 isLoading={syncing === selectedTld}
+                 isLoading={!!selectedTld && syncing === selectedTld}
                  display={{ base: 'none', md: 'flex' }}
                >
                  {config.airdrop_ui.sync.button}
@@ -708,7 +708,7 @@ export default function AirdropPage() {
                 size="sm" 
                 colorScheme="yellow" 
                 onClick={onSyncOpen} 
-                isLoading={syncing === selectedTld}
+                isLoading={!!selectedTld && syncing === selectedTld}
                 leftIcon={<FiRefreshCw />}
                 borderRadius="lg"
               >
