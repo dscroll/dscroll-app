@@ -49,6 +49,7 @@ import { executeTransaction } from "@/utils/transaction";
 import Web3PageContainer from "@/components/Web3PageContainer";
 import config from "@/config/config.json";
 import { getWalletRecords, syncRecords } from "@/app/actions/records";
+import { getAirdropsByTld, getAirdropsByGranter, bulkUpsertAirdrops } from "@/app/actions/airdrop";
 
 
 import "./airdrop.css";
@@ -96,6 +97,7 @@ export default function AirdropPage() {
   const [claiming, setClaiming] = useState<number | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'unclaimed' | 'claimed' | 'withdrawn'>('unclaimed');
+  const [showMyCampaigns, setShowMyCampaigns] = useState(false);
   const [isCached, setIsCached] = useState(false);
   const [cacheTime, setCacheTime] = useState<string | null>(null);
   const [showProgressModal, setShowProgressModal] = useState(false);
@@ -343,10 +345,12 @@ export default function AirdropPage() {
         if (!selectedTld || !uniqueTlds.includes(selectedTld)) {
           finalTld = uniqueTlds[0];
           setSelectedTld(finalTld);
+          setShowMyCampaigns(false);
         }
       } else {
         finalTld = null;
         setSelectedTld(null);
+        setShowMyCampaigns(false);
       }
 
       if (finalTld) {
@@ -395,9 +399,13 @@ export default function AirdropPage() {
     }
   };
 
-  // 2. Fetch Airdrops when TLD changes
+  // 2. Fetch Airdrops when TLD or showMyCampaigns changes
   useEffect(() => {
-    if (selectedTld) {
+    if (showMyCampaigns) {
+      setIsCached(false);
+      setCacheTime(null);
+      fetchMyCreatedAirdrops();
+    } else if (selectedTld) {
       const cacheKey = `dscroll_airdrop_cache_${address?.toLowerCase()}_${chainId}`;
       try {
         const cached = localStorage.getItem(cacheKey);
@@ -431,7 +439,7 @@ export default function AirdropPage() {
       checkTldOwnership(selectedTld);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTld, userDomains]);
+  }, [selectedTld, showMyCampaigns, userDomains]);
 
   const checkTldOwnership = async (tld: string) => {
     if (!address) return;
@@ -450,42 +458,151 @@ export default function AirdropPage() {
 
   const fetchAirdrops = async (tld: string) => {
     setLoadingAirdrops(true);
-    setAirdrops([]);
+    
+    // 1. Load from DB immediately to act as cache
+    let dbCampaigns: AirdropCampaign[] = [];
+    try {
+      const dbRes = await getAirdropsByTld(tld, networkKey);
+      if (dbRes.success && dbRes.data) {
+        dbCampaigns = dbRes.data.map((item: any) => ({
+          id: item.airdrop_index,
+          tldName: item.tld,
+          tokenAddress: item.token_address,
+          tokenInfo: {
+            name: item.token_name || "Unknown",
+            symbol: item.token_symbol || "???",
+            decimals: item.token_decimals || 18,
+            address: item.token_address
+          },
+          totalAmount: BigInt(item.total_amount),
+          perUserShare: BigInt(item.per_user_share),
+          remainingBalance: BigInt(item.remaining_balance),
+          isActive: item.is_active,
+          isWithdrawn: item.is_withdrawn,
+          granter: item.granter,
+          createdAt: Math.floor(new Date(item.created_at).getTime() / 1000),
+          hasClaimed: false,
+          anyClaimed: false
+        }));
+        
+        // Show cached db campaigns immediately
+        setAirdrops(dbCampaigns);
+      }
+    } catch (dbErr) {
+      console.warn("Failed to fetch cached airdrops from database:", dbErr);
+    }
+
     try {
       initializeSDK();
       const count = await sdk.rwairdrop(networkKey).getTLDAirdropCount(tld);
-      const airdropIndices = Array.from({ length: Number(count) }, (_, i) => i);
+      const totalCount = Number(count);
       
-      const campaigns = await Promise.all(airdropIndices.map(async (i) => {
-        const info = await sdk.rwairdrop(networkKey).getAirdropInfoByTLD(tld, i);
-        
-        // Fetch Token Info
-        let tokenInfo: TokenInfo | undefined;
-        try {
-           const provider = sdk.getProvider(networkKey); 
-           const contract = new ethers.Contract(info.tokenAddress, [
-             "function symbol() view returns (string)",
-             "function decimals() view returns (uint8)",
-             "function name() view returns (string)"
-           ], provider);
-           const [name, symbol, decimals] = await Promise.all([
-             contract.name(),
-             contract.symbol(),
-             contract.decimals()
-           ]);
-           tokenInfo = { name, symbol, decimals, address: info.tokenAddress };
-        } catch (e) {
-          tokenInfo = { name: "Unknown", symbol: "???", decimals: 18, address: info.tokenAddress };
+      // Determine which indices we need to fetch/update
+      // We always want to fetch new ones.
+      // We also want to refresh the active/not withdrawn ones.
+      const dbCampaignsMap = new Map(dbCampaigns.map(c => [c.id, c]));
+      const indicesToFetch: number[] = [];
+      
+      for (let i = 0; i < totalCount; i++) {
+        const cached = dbCampaignsMap.get(i);
+        if (!cached || (cached.isActive && !cached.isWithdrawn)) {
+          indicesToFetch.push(i);
         }
+      }
 
-        // Check if user has ANY domain that CAN claim
+      // Fetch on-chain info for these indices
+      const updatedOrNewCampaigns = await Promise.all(indicesToFetch.map(async (i) => {
+        try {
+          const info = await sdk.rwairdrop(networkKey).getAirdropInfoByTLD(tld, i);
+          
+          let tokenInfo = dbCampaignsMap.get(i)?.tokenInfo;
+          if (!tokenInfo || tokenInfo.name === "Unknown") {
+            try {
+               const provider = sdk.getProvider(networkKey); 
+               const contract = new ethers.Contract(info.tokenAddress, [
+                 "function symbol() view returns (string)",
+                 "function decimals() view returns (uint8)",
+                 "function name() view returns (string)"
+               ], provider);
+               const [name, symbol, decimals] = await Promise.all([
+                 contract.name(),
+                 contract.symbol(),
+                 contract.decimals()
+               ]);
+               tokenInfo = { name, symbol, decimals, address: info.tokenAddress };
+            } catch (e) {
+              tokenInfo = { name: "Unknown", symbol: "???", decimals: 18, address: info.tokenAddress };
+            }
+          }
+
+          return {
+            id: i,
+            tldName: tld,
+            tokenAddress: info.tokenAddress,
+            tokenInfo,
+            totalAmount: info.totalAmount,
+            perUserShare: info.perUserShare,
+            remainingBalance: info.remainingBalance,
+            isActive: info.isActive,
+            isWithdrawn: info.isWithdrawn,
+            granter: info.granter,
+            createdAt: Number(info.createdAt)
+          };
+        } catch (err) {
+          console.warn(`Failed to fetch on-chain info for airdrop index ${i}`, err);
+          return null;
+        }
+      }));
+
+      // Filter out failed fetches
+      const validCampaigns = updatedOrNewCampaigns.filter((c): c is NonNullable<typeof c> => c !== null);
+
+      // Save them back to the database
+      if (validCampaigns.length > 0) {
+        const airdropsToSave = validCampaigns.map(c => ({
+          tld: c.tldName,
+          airdrop_index: c.id,
+          token_address: c.tokenAddress,
+          token_name: c.tokenInfo?.name,
+          token_symbol: c.tokenInfo?.symbol,
+          token_decimals: c.tokenInfo?.decimals,
+          total_amount: c.totalAmount.toString(),
+          per_user_share: c.perUserShare.toString(),
+          remaining_balance: c.remainingBalance.toString(),
+          is_active: c.isActive,
+          is_withdrawn: c.isWithdrawn,
+          granter: c.granter,
+          network: networkKey
+        }));
+        await bulkUpsertAirdrops(airdropsToSave);
+      }
+
+      // Re-assemble the full list of campaigns using database + newly fetched
+      const mergedCampaignsMap = new Map<number, AirdropCampaign>();
+      
+      // Seed with DB cached ones
+      dbCampaigns.forEach(c => mergedCampaignsMap.set(c.id, c));
+      
+      // Update with fresh on-chain fetched ones
+      validCampaigns.forEach(c => {
+        mergedCampaignsMap.set(c.id, {
+          ...c,
+          hasClaimed: false,
+          anyClaimed: false
+        });
+      });
+
+      const finalCampaigns = Array.from(mergedCampaignsMap.values());
+
+      // Check claim status for each domain in parallel
+      const updatedCampaigns = await Promise.all(finalCampaigns.map(async (campaign) => {
         let hasClaimed = false;
         let unclaimedDomainCount = 0;
         const domainsInTld = userDomains.filter(d => d && d.endsWith(`@${tld}`));
         
         await Promise.all(domainsInTld.map(async (domain) => {
           try {
-            const claimed = await sdk.rwairdrop(networkKey).hasDomainClaimed(domain, i);
+            const claimed = await sdk.rwairdrop(networkKey).hasDomainClaimed(domain, campaign.id);
             if (claimed) {
               hasClaimed = true;
             } else {
@@ -500,33 +617,90 @@ export default function AirdropPage() {
         const anyClaimed = hasClaimed;
 
         return {
-          id: i,
-          tldName: tld,
-          tokenAddress: info.tokenAddress,
-          tokenInfo,
-          totalAmount: info.totalAmount,
-          perUserShare: info.perUserShare,
-          remainingBalance: info.remainingBalance,
-          isActive: info.isActive,
-          isWithdrawn: info.isWithdrawn,
-          granter: info.granter,
-          createdAt: Number(info.createdAt),
+          ...campaign,
           hasClaimed: allClaimed,
           anyClaimed: anyClaimed
         };
       }));
 
-      // Sort by createdAt descending (latest first)
-      const sortedCampaigns = campaigns.sort((a, b) => b.createdAt - a.createdAt);
+      // Sort by index descending (latest first)
+      const sortedCampaigns = updatedCampaigns.sort((a, b) => b.id - a.id);
       setAirdrops(sortedCampaigns);
       updateAirdropCache(tld, sortedCampaigns);
 
-      // Successfully finished network fetch, mark as cached
       setIsCached(true);
       const dateStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       setCacheTime(dateStr);
     } catch (error) {
       console.error("Failed to fetch airdrops:", error);
+    } finally {
+      setLoadingAirdrops(false);
+    }
+  };
+
+  const fetchMyCreatedAirdrops = async () => {
+    if (!address) return;
+    setLoadingAirdrops(true);
+    setAirdrops([]);
+    try {
+      const res = await getAirdropsByGranter(address, networkKey);
+      if (res.success && res.data) {
+        const campaigns = res.data.map((item: any) => ({
+          id: item.airdrop_index,
+          tldName: item.tld,
+          tokenAddress: item.token_address,
+          tokenInfo: {
+            name: item.token_name || "Unknown",
+            symbol: item.token_symbol || "???",
+            decimals: item.token_decimals || 18,
+            address: item.token_address
+          },
+          totalAmount: BigInt(item.total_amount),
+          perUserShare: BigInt(item.per_user_share),
+          remainingBalance: BigInt(item.remaining_balance),
+          isActive: item.is_active,
+          isWithdrawn: item.is_withdrawn,
+          granter: item.granter,
+          createdAt: Math.floor(new Date(item.created_at).getTime() / 1000),
+          hasClaimed: false,
+          anyClaimed: false
+        }));
+
+        // Fetch claimed status for each in parallel
+        initializeSDK();
+        const updatedCampaigns = await Promise.all(campaigns.map(async (campaign) => {
+          let hasClaimed = false;
+          let unclaimedDomainCount = 0;
+          const domainsInTld = userDomains.filter(d => d && d.endsWith(`@${campaign.tldName}`));
+          
+          await Promise.all(domainsInTld.map(async (domain) => {
+            try {
+              const claimed = await sdk.rwairdrop(networkKey).hasDomainClaimed(domain, campaign.id);
+              if (claimed) {
+                hasClaimed = true;
+              } else {
+                unclaimedDomainCount++;
+              }
+            } catch (err) {
+              console.warn(`Failed to check claim status for ${domain}`, err);
+            }
+          }));
+
+          const allClaimed = domainsInTld.length > 0 && unclaimedDomainCount === 0;
+          const anyClaimed = hasClaimed;
+
+          return {
+            ...campaign,
+            hasClaimed: allClaimed,
+            anyClaimed: anyClaimed
+          };
+        }));
+
+        const sortedCampaigns = updatedCampaigns.sort((a, b) => b.createdAt - a.createdAt);
+        setAirdrops(sortedCampaigns);
+      }
+    } catch (err) {
+      console.error("Failed to fetch my created airdrops:", err);
     } finally {
       setLoadingAirdrops(false);
     }
@@ -723,6 +897,12 @@ export default function AirdropPage() {
 
 
   const filteredAirdrops = airdrops.filter(reward => {
+    if (showMyCampaigns) {
+      if (activeTab === 'unclaimed') return reward.isActive && !reward.isWithdrawn;
+      if (activeTab === 'claimed') return !reward.isActive || reward.isWithdrawn || BigInt(reward.remainingBalance) < BigInt(reward.totalAmount);
+      if (activeTab === 'withdrawn') return reward.isWithdrawn;
+      return true;
+    }
     if (activeTab === 'unclaimed') return !reward.hasClaimed && !reward.isWithdrawn;
     if (activeTab === 'claimed') return reward.anyClaimed;
     if (activeTab === 'withdrawn') return reward.isWithdrawn;
@@ -784,11 +964,31 @@ export default function AirdropPage() {
             </Link>
           </Box>
           <Box className="tld-list">
+            {address && (
+              <Box 
+                className={`tld-item ${showMyCampaigns ? 'active' : ''}`}
+                onClick={() => {
+                  setShowMyCampaigns(true);
+                  setSelectedTld(null);
+                }}
+                style={{
+                  borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+                  paddingBottom: "10px",
+                  marginBottom: "8px"
+                }}
+              >
+                <Icon as={FiGift} className="tld-icon" color="purple.400" />
+                <Text fontSize="sm" isTruncated fontWeight="semibold" color="purple.200">My Campaigns</Text>
+              </Box>
+            )}
             {tlds.map(tld => (
               <Box 
                 key={tld} 
-                className={`tld-item ${selectedTld === tld ? 'active' : ''}`}
-                onClick={() => setSelectedTld(tld)}
+                className={`tld-item ${selectedTld === tld && !showMyCampaigns ? 'active' : ''}`}
+                onClick={() => {
+                  setSelectedTld(tld);
+                  setShowMyCampaigns(false);
+                }}
               >
                 <Icon as={FiFolder} className="tld-icon" />
                 <Text fontSize="sm" isTruncated>{tld}</Text>
@@ -841,6 +1041,12 @@ export default function AirdropPage() {
                     )}
                   </>
                 )}
+                {showMyCampaigns && (
+                  <>
+                    <span className="path-separator">/</span>
+                    <span style={{ color: '#d53f8c', fontWeight: 'bold' }}>my-campaigns</span>
+                  </>
+                )}
               </Box>
               <HStack spacing={4} mt={2}>
                 <Box 
@@ -885,6 +1091,18 @@ export default function AirdropPage() {
                       checkTldOwnership(selectedTld);
                     }}
                     isLoading={loadingAirdrops || loading}
+                  >
+                    Refresh
+                  </Button>
+                )}
+                {showMyCampaigns && (
+                  <Button 
+                    leftIcon={loadingAirdrops ? <Spinner size="xs" /> : <FiRefreshCw />} 
+                    size="sm" 
+                    variant="ghost" 
+                    colorScheme="purple" 
+                    onClick={fetchMyCreatedAirdrops}
+                    isLoading={loadingAirdrops}
                   >
                     Refresh
                   </Button>
@@ -1017,21 +1235,26 @@ export default function AirdropPage() {
             <Box className="content-footer">
                <HStack justify="space-between" w="full">
                  <Text fontSize="xs" color="gray.500">
-                   {filteredAirdrops.length} unclaimed rewards available in <b>{selectedTld}</b>
+                   {filteredAirdrops.length} unclaimed rewards available {selectedTld ? (
+                     <>in <b>{selectedTld}</b></>
+                   ) : (
+                     <>under <b>My Campaigns</b></>
+                   )}
                  </Text>
-                 <Button 
-                   colorScheme="blue" 
-                   size="md" 
-                   leftIcon={<FiGift />} 
-                   onClick={handleClaimAll}
-                   isLoading={claimingAll}
-                   borderRadius="xl"
-                   px={10}
-                   boxShadow="0 4px 14px 0 rgba(49, 130, 206, 0.39)"
-                 >
-                   {config.airdrop_ui.claim_all}
-                 </Button>
-
+                 {selectedTld && (
+                   <Button 
+                     colorScheme="blue" 
+                     size="md" 
+                     leftIcon={<FiGift />} 
+                     onClick={handleClaimAll}
+                     isLoading={claimingAll}
+                     borderRadius="xl"
+                     px={10}
+                     boxShadow="0 4px 14px 0 rgba(49, 130, 206, 0.39)"
+                   >
+                     {config.airdrop_ui.claim_all}
+                   </Button>
+                 )}
                </HStack>
             </Box>
           )}
@@ -1130,14 +1353,14 @@ export default function AirdropPage() {
                       <Text fontWeight="semibold" fontSize="sm">{config.airdrop_ui.how_to_claim}</Text>
 
                       <Text fontSize="xs" color="gray.400">
-                        You need to own a sub-name under <b>@{selectedTld}</b>. Each domain you own allows you to claim the share once. 
+                        You need to own a sub-name under <b>@{selectedTld || selectedReward?.tldName}</b>. Each domain you own allows you to claim the share once. 
                         Make sure your domains are <b>synced</b> before claiming.
                       </Text>
                     </VStack>
                   </HStack>
                 </Box>
 
-                {selectedReward && syncStatus[selectedTld!] === false && (
+                {selectedReward && (selectedTld || selectedReward.tldName) && syncStatus[selectedTld || selectedReward.tldName] === false && (
                    <Box bg="yellowAlpha.100" p={3} borderRadius="lg" border="1px solid" borderColor="yellowAlpha.300">
                      <HStack>
                        <Icon as={FiAlertCircle} color="yellow.400" />
@@ -1163,7 +1386,7 @@ export default function AirdropPage() {
                   borderRadius="lg"
                   px={8}
                   isLoading={claiming === selectedReward?.id}
-                  isDisabled={selectedReward?.hasClaimed || selectedReward?.remainingBalance === 0n || !selectedReward?.isActive || syncStatus[selectedTld!] === false}
+                  isDisabled={selectedReward?.hasClaimed || selectedReward?.remainingBalance === 0n || !selectedReward?.isActive || syncStatus[selectedTld || selectedReward?.tldName || ""] === false}
                 >
                   {selectedReward?.hasClaimed ? config.airdrop_ui.already_claimed : config.airdrop_ui.claim_now}
                 </Button>

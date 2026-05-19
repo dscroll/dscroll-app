@@ -40,6 +40,7 @@ import { formatAddress, formatTokenAmount } from "@/utils/format";
 import { executeTransaction } from "@/utils/transaction";
 import Web3PageContainer from "@/components/Web3PageContainer";
 import config from "@/config/config.json";
+import { saveAirdrop } from "@/app/actions/airdrop";
 
 const ERC20_ABI = [
   "function name() view returns (string)",
@@ -184,7 +185,36 @@ export default function CreateAirdropPage() {
           loadingMessage: "Creating your reward campaign...",
           successTitle: "Airdrop Live!",
           successMessage: `Your ${tokenInfo.symbol} airdrop for @${selectedTld} has been created.`,
-          onSuccess: () => router.push("/airdrop")
+          onSuccess: async () => {
+            try {
+              // Wait for transaction to index on RPC provider
+              await new Promise(r => setTimeout(r, 2000));
+              initializeSDK();
+              const count = await sdk.rwairdrop('basesepolia').getTLDAirdropCount(selectedTld);
+              const newIndex = Number(count) - 1;
+              if (newIndex >= 0) {
+                const info = await sdk.rwairdrop('basesepolia').getAirdropInfoByTLD(selectedTld, newIndex);
+                await saveAirdrop({
+                  tld: selectedTld,
+                  airdrop_index: newIndex,
+                  token_address: tokenAddress,
+                  token_name: tokenInfo.name,
+                  token_symbol: tokenInfo.symbol,
+                  token_decimals: tokenInfo.decimals,
+                  total_amount: info.totalAmount.toString(),
+                  per_user_share: info.perUserShare.toString(),
+                  remaining_balance: info.remainingBalance.toString(),
+                  is_active: info.isActive,
+                  is_withdrawn: info.isWithdrawn,
+                  granter: info.granter,
+                  network: 'basesepolia'
+                });
+              }
+            } catch (err) {
+              console.error("Failed to save new airdrop to Supabase:", err);
+            }
+            router.push("/airdrop");
+          }
         }
       );
     } catch (error) {

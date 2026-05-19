@@ -91,6 +91,28 @@ export const ensureTablesExist = async () => {
       );
     `);
 
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS airdrops (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tld TEXT NOT NULL,
+        airdrop_index INTEGER NOT NULL,
+        token_address TEXT NOT NULL,
+        token_name TEXT,
+        token_symbol TEXT,
+        token_decimals INTEGER DEFAULT 18,
+        total_amount TEXT NOT NULL,
+        per_user_share TEXT NOT NULL,
+        remaining_balance TEXT NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        is_withdrawn BOOLEAN DEFAULT false,
+        granter TEXT NOT NULL,
+        network TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(tld, airdrop_index, network)
+      );
+    `);
+
     // Migration: add tokenid and tokenuri columns if they don't exist
     await db.query(`
       DO $$
@@ -135,6 +157,20 @@ export const ensureTablesExist = async () => {
         ) THEN
           ALTER TABLE records ENABLE ROW LEVEL SECURITY;
           CREATE POLICY "Public profiles are viewable by everyone" ON records FOR SELECT USING (true);
+        END IF;
+      END
+      $$;
+    `);
+
+    // RLS and policy for airdrops
+    await db.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_policies WHERE tablename = 'airdrops' AND policyname = 'Public airdrops are viewable by everyone'
+        ) THEN
+          ALTER TABLE airdrops ENABLE ROW LEVEL SECURITY;
+          CREATE POLICY "Public airdrops are viewable by everyone" ON airdrops FOR SELECT USING (true);
         END IF;
       END
       $$;
