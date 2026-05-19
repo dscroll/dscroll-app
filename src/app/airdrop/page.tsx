@@ -84,6 +84,8 @@ export default function AirdropPage() {
   const networkKey = getODudeNetworkFromChainId(chainId) || 'basesepolia';
   const toast = useToast();
 
+  const allowedTlds = new Set((config.domains || []).map((d: any) => d.tld.toLowerCase()));
+
   const [loading, setLoading] = useState(false);
   const [tlds, setTlds] = useState<string[]>([]);
   const [selectedTld, setSelectedTld] = useState<string | null>(null);
@@ -122,9 +124,13 @@ export default function AirdropPage() {
       if (cached) {
         const parsed = JSON.parse(cached);
         if (parsed && Array.isArray(parsed.tlds)) {
-          setTlds(parsed.tlds);
+          const filteredTlds = parsed.tlds.filter((tld: string) => allowedTlds.has(tld.toLowerCase()));
+          setTlds(filteredTlds);
           setUserDomains(parsed.userDomains ?? []);
-          setSelectedTld(parsed.selectedTld ?? (parsed.tlds.length > 0 ? parsed.tlds[0] : null));
+          
+          const cacheSelected = parsed.selectedTld;
+          const isSelectedValid = cacheSelected && filteredTlds.includes(cacheSelected);
+          setSelectedTld(isSelectedValid ? cacheSelected : (filteredTlds.length > 0 ? filteredTlds[0] : null));
           
           if (parsed.selectedTld && parsed.airdropsByTld?.[parsed.selectedTld]) {
             setAirdrops(parsed.airdropsByTld[parsed.selectedTld]);
@@ -202,8 +208,9 @@ export default function AirdropPage() {
         const uniqueTlds = Array.from(new Set(domains.map((name: string) => {
           if (!name) return null;
           const parts = name.split('@');
-          return parts.length > 1 ? parts[1] : null;
-        }).filter(Boolean))) as string[];
+          const tld = parts.length > 1 ? parts[1].toLowerCase() : null;
+          return tld && allowedTlds.has(tld) ? tld : null;
+        }).filter((tld): tld is string => !!tld)));
         
         setTlds(uniqueTlds);
         
@@ -325,8 +332,9 @@ export default function AirdropPage() {
       const uniqueTlds = Array.from(new Set(allDomains.map((name: string) => {
         if (!name) return null;
         const parts = name.split('@');
-        return parts.length > 1 ? parts[1] : null;
-      }).filter(Boolean))) as string[];
+        const tld = parts.length > 1 ? parts[1].toLowerCase() : null;
+        return tld && allowedTlds.has(tld) ? tld : null;
+      }).filter((tld): tld is string => !!tld)));
       
       setTlds(uniqueTlds);
       
@@ -726,8 +734,8 @@ export default function AirdropPage() {
       <Box className="airdrop-explorer">
         {/* Sidebar */}
         <Box className="explorer-sidebar">
-          <Box className="sidebar-header">
-            <HStack justify="space-between">
+          <Box className="sidebar-header" display="flex" flexDirection="column" gap={4}>
+            <HStack justify="space-between" w="full">
               <Heading size="xs" color="gray.500" letterSpacing="widest">{config.airdrop_ui.namespaces_label}</Heading>
 
               <HStack spacing={1}>
@@ -750,6 +758,30 @@ export default function AirdropPage() {
                 />
               </HStack>
             </HStack>
+
+            <Link href={selectedTld ? `/airdrop/create/${selectedTld}` : "/airdrop/create/general"} style={{ width: "100%" }}>
+              <Button 
+                size="sm" 
+                w="full" 
+                colorScheme="green"
+                bgGradient="linear(to-r, green.400, green.600)"
+                color="white"
+                leftIcon={<FiPlusCircle />} 
+                borderRadius="xl"
+                fontWeight="semibold"
+                _hover={{
+                  bgGradient: "linear(to-r, green.300, green.500)",
+                  boxShadow: "0 0 15px rgba(72, 187, 120, 0.4)",
+                  transform: "translateY(-1px)"
+                }}
+                _active={{
+                  transform: "translateY(0)"
+                }}
+                transition="all 0.2s ease"
+              >
+                {config.airdrop_ui.create_button}
+              </Button>
+            </Link>
           </Box>
           <Box className="tld-list">
             {tlds.map(tld => (
@@ -769,14 +801,6 @@ export default function AirdropPage() {
 
               </VStack>
             )}
-          </Box>
-          <Box p={4} borderTop="1px solid rgba(255,255,255,0.05)">
-             <Link href={selectedTld ? `/airdrop/create/${selectedTld}` : "/airdrop/create/general"}>
-               <Button size="sm" w="full" colorScheme="blue" leftIcon={<FiPlusCircle />} variant="outline" borderRadius="xl">
-                 {config.airdrop_ui.create_button}
-               </Button>
-
-             </Link>
           </Box>
         </Box>
         

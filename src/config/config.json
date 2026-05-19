@@ -132,7 +132,7 @@
             "decimals": 0
         },
         {
-            "tld": "crypto",
+            "tld": "test",
             "title": "Crypto Name",
             "description": "Exclusive Crypto Name for the Web3 ecosystem. Claim your unique identity on the Crypto namespace.",
             "nft_image": "/nft_crypto.jpg",

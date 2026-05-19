@@ -20,6 +20,7 @@ import {
   SimpleGrid,
   Spinner,
   Badge,
+  Select,
 } from "@chakra-ui/react";
 import { useAccount, useWalletClient } from "wagmi";
 import {
@@ -38,6 +39,7 @@ import { sdk, initializeSDK, handleSDKError } from "@/lib/odude";
 import { formatAddress, formatTokenAmount } from "@/utils/format";
 import { executeTransaction } from "@/utils/transaction";
 import Web3PageContainer from "@/components/Web3PageContainer";
+import config from "@/config/config.json";
 
 const ERC20_ABI = [
   "function name() view returns (string)",
@@ -51,10 +53,25 @@ const ERC20_ABI = [
 export default function CreateAirdropPage() {
   const params = useParams();
   const router = useRouter();
-  const tld = params.tld as string;
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const toast = useToast();
+
+  const availableTlds = config.domains.map((d: any) => d.tld.toLowerCase());
+  const initialTld = params.tld && availableTlds.includes((params.tld as string).toLowerCase())
+    ? (params.tld as string).toLowerCase()
+    : (availableTlds[0] || "eth");
+
+  const [selectedTld, setSelectedTld] = useState<string>(initialTld);
+
+  useEffect(() => {
+    if (params?.tld) {
+      const tldParam = (params.tld as string).toLowerCase();
+      if (availableTlds.includes(tldParam)) {
+        setSelectedTld(tldParam);
+      }
+    }
+  }, [params?.tld]);
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -156,7 +173,7 @@ export default function CreateAirdropPage() {
 
       await executeTransaction(
         (sdk.rwairdrop('basesepolia') as any).createAirdrop(
-          tld,
+          selectedTld,
           tokenAddress,
           totalWei,
           shareWei
@@ -166,7 +183,7 @@ export default function CreateAirdropPage() {
           loadingTitle: "Launching Airdrop",
           loadingMessage: "Creating your reward campaign...",
           successTitle: "Airdrop Live!",
-          successMessage: `Your ${tokenInfo.symbol} airdrop for @${tld} has been created.`,
+          successMessage: `Your ${tokenInfo.symbol} airdrop for @${selectedTld} has been created.`,
           onSuccess: () => router.push("/airdrop")
         }
       );
@@ -201,12 +218,31 @@ export default function CreateAirdropPage() {
           <VStack align="stretch" spacing={8}>
             <Box>
               <Heading size="lg" mb={2}>Create Reward Campaign</Heading>
-              <Text color="gray.400">Distribution tokens to holders of sub-names under <b>@{tld}</b></Text>
+              <Text color="gray.400">Distribution tokens to holders of sub-names under <b>@{selectedTld}</b></Text>
             </Box>
 
             <Divider borderColor="whiteAlpha.100" />
 
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={6}>
+              <FormControl isRequired gridColumn={{ base: "span 1", md: "span 2" }}>
+                <FormLabel color="gray.500">Target TLD</FormLabel>
+                <Select
+                  value={selectedTld}
+                  onChange={(e) => setSelectedTld(e.target.value)}
+                  bg="blackAlpha.300"
+                  borderColor="whiteAlpha.200"
+                  color="white"
+                  _hover={{ borderColor: "blue.400" }}
+                  _focus={{ borderColor: "blue.500", boxShadow: "0 0 0 1px #3182ce" }}
+                >
+                  {config.domains.map((d: any) => (
+                    <option key={d.tld} value={d.tld.toLowerCase()} style={{ backgroundColor: "#1A202C", color: "white" }}>
+                      @{d.tld.toLowerCase()} - {d.title}
+                    </option>
+                  ))}
+                </Select>
+              </FormControl>
+
               <FormControl isRequired>
                 <FormLabel color="gray.500">Token Address</FormLabel>
                 <Input
@@ -311,7 +347,7 @@ export default function CreateAirdropPage() {
             <HStack bg="rgba(43, 108, 176, 0.2)" p={4} borderRadius="xl" spacing={4}>
               <Icon as={FiInfo} color="blue.400" fontSize="20px" />
               <Text fontSize="xs" color="blue.200">
-                The tokens will be locked in the RWAirdrop contract and distributed to anyone who owns a valid sub-name under <b>@{tld}</b>. You cannot withdraw remaining tokens. Only TLD owner can claim remaining tokens.
+                The tokens will be locked in the RWAirdrop contract and distributed to anyone who owns a valid sub-name under <b>@{selectedTld}</b>. You cannot withdraw remaining tokens. Only TLD owner can claim remaining tokens.
               </Text>
             </HStack>
           </VStack>
