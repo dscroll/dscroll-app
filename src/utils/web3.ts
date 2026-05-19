@@ -4,6 +4,7 @@ import {
   bsc,
 } from "wagmi/chains";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
+import { CONFIG } from "@/config/config";
 
 // Map chain string identifiers to chain objects
 export const chainMap = {
@@ -11,17 +12,14 @@ export const chainMap = {
   bsc,
 } as const;
 
-// Supported chain objects array - used for UI and validation
-const supportedChainObjects = [base, bsc] as const;
+// Supported chain objects array - dynamically mapped from CONFIG.blockchain.supportedChains
+const supportedChainObjects = CONFIG.blockchain.supportedChains.map((c) => chainMap[c]);
 
 // RainbowKit + Wagmi config
 export const wagmiConfig = getDefaultConfig({
   appName: "DScroll Name",
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "",
-  // Include both base and bsc in the wagmi chains list
-  // but we can filter what's shown in the UI if needed.
-  // Note: defaultChain in config.ts is 'base', so it should be in this list.
-  chains: [base, bsc],
+  chains: supportedChainObjects as any,
   transports: {
     [base.id]: http(process.env.NEXT_PUBLIC_BASE_RPC_URL || undefined),
     [bsc.id]: http(process.env.NEXT_PUBLIC_BNB_RPC_URL || undefined),

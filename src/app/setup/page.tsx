@@ -30,6 +30,7 @@ import {
   FiRefreshCw
 } from "react-icons/fi";
 import { useRouter } from "next/navigation";
+import { CONFIG } from "@/config/config";
 
 interface SetupStatus {
   walletConnect: boolean;
@@ -37,6 +38,7 @@ interface SetupStatus {
   supabaseAnonKey: boolean;
   supabaseServiceKey: boolean;
   databaseUrl: boolean;
+  isSingleChainConfigured: boolean;
   isAllConfigured: boolean;
 }
 
@@ -254,6 +256,74 @@ export default function SetupPage() {
               Let's get your environment ready. We've detected some missing configuration variables in your <Text as="span" fontWeight="bold" color="white">.env</Text> file.
             </Text>
           </VStack>
+
+          {status && !status.isSingleChainConfigured && (
+            <Box
+              p={8}
+              borderRadius="3xl"
+              bg="rgba(239, 68, 68, 0.08)"
+              border="1.5px solid"
+              borderColor="red.500"
+              boxShadow="0 8px 32px 0 rgba(239, 68, 68, 0.15)"
+              backdropFilter="blur(10px)"
+              w="full"
+              position="relative"
+              overflow="hidden"
+            >
+              <Box 
+                position="absolute" 
+                top="-20px" 
+                right="-20px" 
+                p={10} 
+                bg="red.500" 
+                opacity={0.08} 
+                borderRadius="full"
+              />
+              <VStack align="start" spacing={5}>
+                <HStack spacing={3}>
+                  <Icon as={FiXCircle} boxSize={8} color="red.400" />
+                  <Heading size="md" fontWeight="800" color="red.200" letterSpacing="-0.01em">
+                    Multi-Chain Configuration Lockout
+                  </Heading>
+                </HStack>
+                
+                <Text fontSize="md" color="gray.300" lineHeight="tall">
+                  This white-label application is designed to operate on <strong>exactly one blockchain</strong> at a time for all TLDs. Moving between chains within a single deployment is disabled by design.
+                </Text>
+
+                <Box w="full" p={4} borderRadius="2xl" bg="rgba(0, 0, 0, 0.3)" border="1px solid" borderColor="whiteAlpha.100">
+                  <VStack align="start" spacing={3}>
+                    <Text fontSize="sm" fontWeight="700" color="orange.300" textTransform="uppercase" letterSpacing="wider">
+                      Current Configuration Error:
+                    </Text>
+                    <Text fontSize="sm" color="gray.300">
+                      You have <strong>{CONFIG.blockchain.supportedChains.length} chains</strong> configured in your supported chains array:
+                    </Text>
+                    <Box py={1.5} px={3} bg="whiteAlpha.100" borderRadius="md" fontSize="xs" fontFamily="mono" color="red.300">
+                      supportedChains: {JSON.stringify(CONFIG.blockchain.supportedChains)}
+                    </Box>
+                  </VStack>
+                </Box>
+
+                <Box w="full" p={5} borderRadius="2xl" bg="rgba(0, 0, 0, 0.4)" border="1px solid" borderColor="whiteAlpha.200">
+                  <Heading size="xs" color="teal.300" mb={3} textTransform="uppercase" letterSpacing="wider">
+                    How to Resolve:
+                  </Heading>
+                  <Text fontSize="sm" color="gray.300" mb={3}>
+                    1. Open the file: <Text as="span" fontWeight="bold" color="white" textDecoration="underline">src/config/config.ts</Text><br />
+                    2. Locate the <code>blockchain</code> property block.<br />
+                    3. Modify <code>supportedChains</code> to contain <strong>only one chain</strong> (e.g., <code>["base"]</code>).
+                  </Text>
+                  <Box p={3} bg="gray.900" borderRadius="xl" fontFamily="mono" fontSize="xs" color="green.300" border="1px solid" borderColor="whiteAlpha.200">
+                    {`blockchain: {
+  defaultChain: "base",
+  supportedChains: ["base"] as const,
+}`}
+                  </Box>
+                </Box>
+              </VStack>
+            </Box>
+          )}
 
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={6}>
             <ConfigItem 

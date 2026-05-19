@@ -21,7 +21,7 @@ export const CONFIG = {
   },
   blockchain: {
     defaultChain: "base",
-    supportedChains: ["bsc"] as const,
+    supportedChains: ["base"] as const,
   },
   supabase: {
     url: process.env.NEXT_PUBLIC_SUPABASE_URL || "",

@@ -16,6 +16,7 @@ export interface SetupStatus {
   supabaseAnonKey: boolean;
   supabaseServiceKey: boolean;
   databaseUrl: boolean;
+  isSingleChainConfigured: boolean;
   isAllConfigured: boolean;
   isConnected?: boolean;
 }
@@ -37,6 +38,7 @@ export async function getSetupStatus(): Promise<SetupStatus> {
     databaseUrl: !!process.env.DATABASE_URL && 
                  !process.env.DATABASE_URL.includes("[YOUR-PASSWORD]") && 
                  process.env.DATABASE_URL.includes("postgres"),
+    isSingleChainConfigured: CONFIG.blockchain.supportedChains.length <= 1,
   };
 
   const isAllConfigured = Object.values(status).every(Boolean);

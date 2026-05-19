@@ -73,7 +73,7 @@ export default function Footer() {
 
         {/* Center: Blockchain Info */}
         <Text fontSize="xs" color={mutedColor} opacity={0.5}>
-          Supporting {CONFIG.blockchain.supportedChains.length} networks •
+          Supporting {CONFIG.blockchain.supportedChains.length} {CONFIG.blockchain.supportedChains.length === 1 ? "network" : "networks"} •
           Default: {CONFIG.blockchain.defaultChain}
         </Text>
 

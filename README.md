@@ -112,11 +112,18 @@ export const CONFIG = {
   ],
   theme: "dark",
   blockchain: {
-    defaultChain: "baseSepolia",
-    supportedChains: ["polygon", "mainnet", "baseSepolia", "filecoin", "bsc"],
+    defaultChain: "base",
+    supportedChains: ["base"] as const,
   },
 };
 ```
+
+> [!WARNING]
+> **Single-Chain Mode Enforcement**
+>
+> This is a white-label application. While it supports multiple networks under the hood, the entire dApp deployment must operate on **exactly one single blockchain** at a time for all TLDs. Moving between multiple chains within the same running application instance is disabled by design.
+>
+> If you list more than one chain in the `blockchain.supportedChains` array in `src/config/config.ts`, the application will stop execution and redirect to the **Setup Wizard** with a block notice. Ensure that the `supportedChains` array contains **exactly one** chain (e.g., `["base"]`).
 
 ---
 
