@@ -22,6 +22,10 @@ import {
   AlertDialogContent,
   AlertDialogOverlay,
   Tooltip,
+  Modal,
+  ModalOverlay,
+  ModalContent,
+  ModalBody,
 } from "@chakra-ui/react";
 import { useAccount, useWalletClient, useChainId } from "wagmi";
 import { 
@@ -44,6 +48,7 @@ import { formatAddress, formatTokenAmount } from "@/utils/format";
 import { executeTransaction } from "@/utils/transaction";
 import Web3PageContainer from "@/components/Web3PageContainer";
 import config from "@/config/config.json";
+import { getWalletRecords, syncRecords } from "@/app/actions/records";
 
 
 import "./airdrop.css";
@@ -91,6 +96,13 @@ export default function AirdropPage() {
   const [activeTab, setActiveTab] = useState<'unclaimed' | 'claimed' | 'withdrawn'>('unclaimed');
   const [isCached, setIsCached] = useState(false);
   const [cacheTime, setCacheTime] = useState<string | null>(null);
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  const [scanSteps, setScanSteps] = useState([
+    { label: "Connecting to Blockchain Network", status: "pending", description: "" },
+    { label: "Scanning On-chain Web3 Names", status: "pending", description: "" },
+    { label: "Syncing with Supabase Database", status: "pending", description: "" },
+    { label: "Loading Eligible Airdrop Rewards", status: "pending", description: "" }
+  ]);
   
   // Confirmation state
   const { isOpen: isSyncOpen, onOpen: onSyncOpen, onClose: onSyncClose } = useDisclosure();
@@ -179,13 +191,43 @@ export default function AirdropPage() {
     }
   };
 
+  const fetchFromDatabase = async (userAddress: string) => {
+    setLoading(true);
+    try {
+      const res = await getWalletRecords(userAddress);
+      if (res.success && res.data) {
+        const domains = res.data.map((item: any) => item.subname);
+        setUserDomains(domains);
+
+        const uniqueTlds = Array.from(new Set(domains.map((name: string) => {
+          if (!name) return null;
+          const parts = name.split('@');
+          return parts.length > 1 ? parts[1] : null;
+        }).filter(Boolean))) as string[];
+        
+        setTlds(uniqueTlds);
+        
+        if (uniqueTlds.length > 0) {
+          if (!selectedTld || !uniqueTlds.includes(selectedTld)) {
+            setSelectedTld(uniqueTlds[0]);
+          }
+        } else {
+          setSelectedTld(null);
+        }
+      } else {
+        console.warn("Failed to fetch from DB:", res.error);
+      }
+    } catch (error) {
+      console.error("Failed to fetch from DB:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 1. Initial Scan: Get all owned names and extract TLDs
   useEffect(() => {
     if (isConnected && address) {
-      const loaded = loadCache();
-      if (!loaded) {
-        scanWallet(false);
-      }
+      fetchFromDatabase(address);
     } else {
       setLoading(false);
       setTlds([]);
@@ -201,19 +243,86 @@ export default function AirdropPage() {
   }, [isConnected, address]);
 
   const scanWallet = async (bypassCache = false) => {
-    setLoading(true);
+    // 1. Show the Progress Modal
+    setShowProgressModal(true);
+    
+    // Reset steps
+    const steps = [
+      { label: "Connecting to Blockchain Network", status: "active", description: `Connecting to ${networkKey}...` },
+      { label: "Scanning On-chain Web3 Names", status: "pending", description: "" },
+      { label: "Syncing with Supabase Database", status: "pending", description: "" },
+      { label: "Loading Eligible Airdrop Rewards", status: "pending", description: "" }
+    ];
+    setScanSteps([...steps]);
+
     if (bypassCache) {
       setIsCached(false);
       setCacheTime(null);
     }
-    try {
-      initializeSDK();
-      const namesList = await sdk.getNamesList(address!);
-      
-      const domains = namesList.map((item: any) => typeof item === 'object' ? item.name : item);
-      setUserDomains(domains);
 
-      const uniqueTlds = Array.from(new Set(domains.map((name: string) => {
+    try {
+      // --- STEP 1: Connect to network ---
+      await new Promise(r => setTimeout(r, 600)); // smooth transition
+      initializeSDK();
+      const currentNetworkKey = getODudeNetworkFromChainId(chainId);
+      if (currentNetworkKey) {
+        try {
+          sdk.connectNetwork(currentNetworkKey);
+        } catch (err) {
+          console.warn(`Network ${currentNetworkKey} not supported by SDK:`, err);
+        }
+      }
+      
+      steps[0].status = "success";
+      steps[0].description = `Connected to ${currentNetworkKey || 'default'} network`;
+      steps[1].status = "active";
+      steps[1].description = "Querying smart contracts...";
+      setScanSteps([...steps]);
+
+      // --- STEP 2: Scan on-chain names ---
+      await new Promise(r => setTimeout(r, 800)); // smooth transition
+      const namesList = await sdk.getNamesList(address!);
+      const domains = namesList.map((item: any) => typeof item === 'object' ? item.name : item);
+      
+      steps[1].status = "success";
+      steps[1].description = `Found ${domains.length} Web3 names on-chain`;
+      steps[2].status = "active";
+      steps[2].description = "Updating local database...";
+      setScanSteps([...steps]);
+
+      // --- STEP 3: Sync with Supabase ---
+      await new Promise(r => setTimeout(r, 800)); // smooth transition
+      const subnamesToSync = namesList.map((item: any) => {
+        const name = typeof item === 'object' ? item.name : item;
+        const tokenId = typeof item === 'object' ? item.tokenId : "";
+        return {
+          subname: name,
+          walletAddress: address!,
+          tokenid: tokenId.toString()
+        };
+      }).filter(n => n.subname && n.subname.includes("@"));
+
+      if (subnamesToSync.length > 0) {
+        await syncRecords(subnamesToSync);
+        steps[2].description = `Synced ${subnamesToSync.length} names to Supabase`;
+      } else {
+        steps[2].description = "No new names to sync";
+      }
+      steps[2].status = "success";
+      steps[3].status = "active";
+      steps[3].description = "Loading active airdrops...";
+      setScanSteps([...steps]);
+
+      // --- STEP 4: Fetch Unified Data from DB ---
+      await new Promise(r => setTimeout(r, 800)); // smooth transition
+      const dbRes = await getWalletRecords(address!);
+      let allDomains = domains;
+      if (dbRes.success && dbRes.data) {
+        allDomains = Array.from(new Set([...domains, ...dbRes.data.map((item: any) => item.subname)]));
+      }
+      setUserDomains(allDomains);
+
+      const uniqueTlds = Array.from(new Set(allDomains.map((name: string) => {
         if (!name) return null;
         const parts = name.split('@');
         return parts.length > 1 ? parts[1] : null;
@@ -221,11 +330,53 @@ export default function AirdropPage() {
       
       setTlds(uniqueTlds);
       
-      if (uniqueTlds.length > 0 && !selectedTld) {
-        setSelectedTld(uniqueTlds[0]);
+      let finalTld = selectedTld;
+      if (uniqueTlds.length > 0) {
+        if (!selectedTld || !uniqueTlds.includes(selectedTld)) {
+          finalTld = uniqueTlds[0];
+          setSelectedTld(finalTld);
+        }
+      } else {
+        finalTld = null;
+        setSelectedTld(null);
       }
-    } catch (error) {
+
+      if (finalTld) {
+        await fetchAirdrops(finalTld);
+        await checkSyncStatus(finalTld);
+        await checkTldOwnership(finalTld);
+      }
+
+      steps[3].status = "success";
+      steps[3].description = finalTld ? `Loaded campaigns for ${finalTld}` : "No TLD campaigns to load";
+      setScanSteps([...steps]);
+
+      // All finished successfully!
+      await new Promise(r => setTimeout(r, 1200)); // Let the user see the success checkmarks
+      setShowProgressModal(false);
+
+      toast({
+        title: "Synchronization Complete",
+        description: "Your owned TLDs and rewards are successfully synchronized.",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+
+    } catch (error: any) {
       console.error("Failed to scan wallet:", error);
+      
+      // Mark active step as failed
+      const activeIdx = steps.findIndex(s => s.status === "active");
+      if (activeIdx !== -1) {
+        steps[activeIdx].status = "failed";
+        steps[activeIdx].description = error.message || "Failed";
+      }
+      setScanSteps([...steps]);
+      
+      await new Promise(r => setTimeout(r, 1500));
+      setShowProgressModal(false);
+
       toast({
         title: "Scan Failed",
         description: handleSDKError(error).message,
@@ -233,8 +384,6 @@ export default function AirdropPage() {
         duration: 5000,
         isClosable: true,
       });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -398,18 +547,27 @@ export default function AirdropPage() {
     setSyncing(selectedTld);
     try {
       initializeSDK();
+      const networkKey = getODudeNetworkFromChainId(chainId);
+      if (networkKey) {
+        try {
+          sdk.connectNetwork(networkKey);
+        } catch (err) {
+          console.warn(`Network ${networkKey} not supported by SDK:`, err);
+        }
+      }
+
       const provider = new ethers.BrowserProvider(walletClient!.transport as any);
       const signer = await provider.getSigner();
-      sdk.connectSigner(signer, networkKey);
+      sdk.connectSigner(signer, networkKey || 'basesepolia');
       
-      const localDomains = userDomains.filter(d => d && d.endsWith(`@${selectedTld}`));
+      const localDomains = userDomains.filter(d => d && d.toLowerCase().endsWith(`@${selectedTld.toLowerCase()}`));
       if (localDomains.length === 0) {
         toast({ title: "No Domains", description: `You don't own any domains in ${selectedTld}`, status: "warning" });
         return;
       }
 
       await executeTransaction(
-        (sdk.rwairdrop(networkKey) as any).syncMyDomains(localDomains),
+        (sdk.rwairdrop(networkKey || 'basesepolia') as any).syncMyDomains(localDomains),
         toast,
         {
           loadingTitle: "Syncing Domains",
@@ -423,8 +581,15 @@ export default function AirdropPage() {
           }
         }
       );
-    } catch (error) {
-      // Error handled by executeTransaction
+    } catch (error: any) {
+      console.error("Sync failed:", error);
+      toast({
+        title: "Sync Failed",
+        description: error.message || "Failed to sync domains.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     } finally {
       setSyncing(null);
     }
@@ -435,15 +600,24 @@ export default function AirdropPage() {
     setClaiming(airdrop.id);
     try {
       initializeSDK();
+      const networkKey = getODudeNetworkFromChainId(chainId);
+      if (networkKey) {
+        try {
+          sdk.connectNetwork(networkKey);
+        } catch (err) {
+          console.warn(`Network ${networkKey} not supported by SDK:`, err);
+        }
+      }
+
       const provider = new ethers.BrowserProvider(walletClient!.transport as any);
       const signer = await provider.getSigner();
-      sdk.connectSigner(signer, networkKey);
+      sdk.connectSigner(signer, networkKey || 'basesepolia');
 
       // Find an eligible domain that hasn't claimed yet
-      const domainsInTld = userDomains.filter(d => d && d.endsWith(`@${airdrop.tldName}`));
+      const domainsInTld = userDomains.filter(d => d && d.toLowerCase().endsWith(`@${airdrop.tldName.toLowerCase()}`));
       let domainToUse = null;
       for (const domain of domainsInTld) {
-        const claimed = await sdk.rwairdrop(networkKey).hasDomainClaimed(domain, airdrop.id);
+        const claimed = await sdk.rwairdrop(networkKey || 'basesepolia').hasDomainClaimed(domain, airdrop.id);
         if (!claimed) {
           domainToUse = domain;
           break;
@@ -455,7 +629,7 @@ export default function AirdropPage() {
       onDetailClose(); // Close only after finding domain and being ready to execute
       
       await executeTransaction(
-        (sdk.rwairdrop(networkKey) as any).claimShare(airdrop.tldName, airdrop.id, domainToUse),
+        (sdk.rwairdrop(networkKey || 'basesepolia') as any).claimShare(airdrop.tldName, airdrop.id, domainToUse),
         toast,
         {
           loadingTitle: "Claiming Airdrop",
@@ -468,13 +642,12 @@ export default function AirdropPage() {
           }
         }
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error("Claim failed:", error);
-      // toast handled by executeTransaction or manual catch
       if (!(error as any).txPromise) {
         toast({
           title: "Claim Failed",
-          description: (error as any).message || "An unexpected error occurred",
+          description: error.message || "An unexpected error occurred",
           status: "error",
         });
       }
@@ -496,9 +669,18 @@ export default function AirdropPage() {
     setClaimingAll(true);
     try {
       initializeSDK();
+      const networkKey = getODudeNetworkFromChainId(chainId);
+      if (networkKey) {
+        try {
+          sdk.connectNetwork(networkKey);
+        } catch (err) {
+          console.warn(`Network ${networkKey} not supported by SDK:`, err);
+        }
+      }
+
       const provider = new ethers.BrowserProvider(walletClient!.transport as any);
       const signer = await provider.getSigner();
-      sdk.connectSigner(signer, networkKey);
+      sdk.connectSigner(signer, networkKey || 'basesepolia');
 
       toast({
         title: "Starting Batch Claim",
@@ -518,8 +700,13 @@ export default function AirdropPage() {
         status: "success"
       });
       
-    } catch (error) {
+    } catch (error: any) {
       console.error("Claim all failed:", error);
+      toast({
+        title: "Claim All Failed",
+        description: error.message || "An unexpected error occurred during batch claim.",
+        status: "error",
+      });
     } finally {
       setClaimingAll(false);
     }
@@ -659,24 +846,25 @@ export default function AirdropPage() {
               </HStack>
             </VStack>
             <HStack spacing={3}>
-               {selectedTld && (
-                 <Button 
-                   leftIcon={loadingAirdrops ? <Spinner size="xs" /> : <FiRefreshCw />} 
-                   size="sm" 
-                   variant="ghost" 
-                   colorScheme="blue" 
-                   onClick={() => {
-                     setIsCached(false);
-                     setCacheTime(null);
-                     fetchAirdrops(selectedTld);
-                     checkSyncStatus(selectedTld);
-                     checkTldOwnership(selectedTld);
-                   }}
-                   isLoading={loadingAirdrops}
-                 >
-                   Refresh
-                 </Button>
-               )}
+                {selectedTld && (
+                  <Button 
+                    leftIcon={loadingAirdrops || loading ? <Spinner size="xs" /> : <FiRefreshCw />} 
+                    size="sm" 
+                    variant="ghost" 
+                    colorScheme="blue" 
+                    onClick={async () => {
+                      setIsCached(false);
+                      setCacheTime(null);
+                      await scanWallet(true);
+                      fetchAirdrops(selectedTld);
+                      checkSyncStatus(selectedTld);
+                      checkTldOwnership(selectedTld);
+                    }}
+                    isLoading={loadingAirdrops || loading}
+                  >
+                    Refresh
+                  </Button>
+                )}
 
                <Button 
                  leftIcon={<FiRefreshCw />} 
@@ -961,6 +1149,68 @@ export default function AirdropPage() {
           </AlertDialogContent>
         </AlertDialogOverlay>
       </AlertDialog>
+
+      {/* Synchronizing Progress Modal */}
+      <Modal isOpen={showProgressModal} onClose={() => {}} isCentered closeOnOverlayClick={false} size="md">
+        <ModalOverlay backdropFilter="blur(10px) saturate(180%)" bg="rgba(0, 0, 0, 0.7)" />
+        <ModalContent 
+          bg="rgba(20, 20, 30, 0.85)" 
+          border="1px solid" 
+          borderColor="whiteAlpha.200" 
+          borderRadius="2xl" 
+          boxShadow="0 8px 32px 0 rgba(0, 0, 0, 0.5)"
+          color="white"
+          p={4}
+        >
+          <ModalBody py={6}>
+            <VStack spacing={6} align="stretch">
+              <VStack spacing={2} textAlign="center">
+                <Box p={3} bg="blueAlpha.200" borderRadius="full" className="pulse-animation">
+                  <Icon as={FiDatabase} boxSize={8} color="blue.400" />
+                </Box>
+                <Text fontSize="xl" fontWeight="bold" bgGradient="linear(to-r, blue.400, purple.400)" bgClip="text">
+                  Synchronizing Wallet & DB
+                </Text>
+                <Text fontSize="xs" color="gray.400">
+                  Checking on-chain records and updating your local cache.
+                </Text>
+              </VStack>
+
+              <VStack align="stretch" spacing={4} bg="whiteAlpha.50" p={5} borderRadius="xl" border="1px solid" borderColor="whiteAlpha.100">
+                {scanSteps.map((step, idx) => (
+                  <HStack key={idx} justify="space-between" align="center" py={1}>
+                    <HStack spacing={3}>
+                      {step.status === "active" && <Spinner size="xs" color="blue.400" />}
+                      {step.status === "success" && <Icon as={FiCheckCircle} color="green.400" boxSize={4} />}
+                      {step.status === "failed" && <Icon as={FiAlertCircle} color="red.400" boxSize={4} />}
+                      {step.status === "pending" && <Box boxSize={4} borderRadius="full" border="2px solid" borderColor="gray.600" />}
+                      
+                      <VStack align="flex-start" spacing={0}>
+                        <Text fontSize="sm" fontWeight={step.status === "active" ? "semibold" : "normal"} color={step.status === "pending" ? "gray.500" : "white"}>
+                          {step.label}
+                        </Text>
+                        {step.description && (
+                          <Text fontSize="xs" color="blue.300" mt={0.5}>
+                            {step.description}
+                          </Text>
+                        )}
+                      </VStack>
+                    </HStack>
+                    
+                    {step.status === "success" && (
+                      <Badge colorScheme="green" size="sm" borderRadius="md">done</Badge>
+                    )}
+                    {step.status === "active" && (
+                      <Badge colorScheme="blue" size="sm" borderRadius="md" className="pulse-badge">running</Badge>
+                    )}
+                  </HStack>
+                ))}
+              </VStack>
+            </VStack>
+          </ModalBody>
+        </ModalContent>
+      </Modal>
+
     </Web3PageContainer>
   );
 }

@@ -182,3 +182,28 @@ export async function updateRecordSync(subname: string, walletAddress: string, t
     return { success: false, error: error.message };
   }
 }
+
+export async function getWalletRecords(walletAddress: string) {
+  if (!walletAddress) return { success: false, error: "Wallet address is required." };
+
+  try {
+    await ensureTablesExist();
+    const supabase = getSupabaseAdmin();
+    
+    const { data, error } = await supabase
+      .from("records")
+      .select("subname, tokenid")
+      .or(`wallet_address.eq.${walletAddress},wallet_address.eq.${walletAddress.toLowerCase()}`);
+
+    if (error) {
+      console.error("Error in getWalletRecords:", error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data: data || [] };
+  } catch (error: any) {
+    console.error("Error in getWalletRecords:", error);
+    return { success: false, error: error.message || "An unexpected error occurred." };
+  }
+}
+
