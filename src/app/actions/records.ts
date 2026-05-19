@@ -3,6 +3,16 @@
 import { verifyMessage } from "viem";
 import { getSupabaseAdmin, ensureTablesExist } from "@/lib/supabase";
 import { sdk, initializeSDK } from "@/lib/odude";
+import config from "@/config/config.json";
+
+const allowedTlds = new Set((config.domains || []).map((d: any) => d.tld.toLowerCase()));
+
+function isSubNameSupported(subname: string) {
+  if (!subname || !subname.includes("@")) return false;
+  const parts = subname.split("@");
+  const tld = parts[parts.length - 1].toLowerCase();
+  return allowedTlds.has(tld);
+}
 
 export interface RecordData {
   subname: string;
@@ -20,6 +30,9 @@ export async function saveRecord(data: RecordData) {
   const { subname, name, email, walletAddress, signature, message, odude } = data;
   console.log(`[saveRecord] Saving subname: ${subname}, odude: ${odude}`);
 
+  if (!isSubNameSupported(subname)) {
+    return { success: false, error: "TLD not supported." };
+  }
 
   try {
     // 0. Ensure tables exist
@@ -117,7 +130,8 @@ export async function getRecord(subname: string) {
 }
 
 export async function syncRecords(records: { subname: string; walletAddress: string; tokenid: string }[]) {
-  if (!records || records.length === 0) return { success: true };
+  const filteredRecords = (records || []).filter(r => isSubNameSupported(r.subname));
+  if (filteredRecords.length === 0) return { success: true, count: 0 };
 
   try {
     await ensureTablesExist();
@@ -129,7 +143,7 @@ export async function syncRecords(records: { subname: string; walletAddress: str
     // is tricky in Supabase JS client without raw SQL.
     // Let's fetch existing subnames first.
     
-    const subnames = records.map(r => r.subname.toLowerCase());
+    const subnames = filteredRecords.map(r => r.subname.toLowerCase());
     const { data: existingRecords, error: fetchError } = await supabase
       .from("records")
       .select("subname")
@@ -138,7 +152,7 @@ export async function syncRecords(records: { subname: string; walletAddress: str
     if (fetchError) throw fetchError;
 
     const existingSubnames = new Set(existingRecords?.map(r => r.subname) || []);
-    const newRecords = records.filter(r => !existingSubnames.has(r.subname)).map(r => ({
+    const newRecords = filteredRecords.filter(r => !existingSubnames.has(r.subname)).map(r => ({
       subname: r.subname.toLowerCase(),
       wallet_address: r.walletAddress,
       tokenid: r.tokenid,
@@ -161,6 +175,10 @@ export async function syncRecords(records: { subname: string; walletAddress: str
 }
 
 export async function updateRecordSync(subname: string, walletAddress: string, tokenid: string, tokenuri: string) {
+  if (!isSubNameSupported(subname)) {
+    return { success: false, error: "TLD not supported." };
+  }
+
   try {
     await ensureTablesExist();
     const supabase = getSupabaseAdmin();

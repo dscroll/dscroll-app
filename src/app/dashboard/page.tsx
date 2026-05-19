@@ -129,7 +129,7 @@ export default function DashboardPage() {
       // Sync sub-names to Supabase
       if (address && mappedNames.length > 0) {
         const subnamesToSync = mappedNames
-          .filter(n => n.type === "Sub-name")
+          .filter(n => n.type === "Sub-name" && isSubNameSupported(n.name))
           .map(n => ({
             subname: n.name,
             walletAddress: address,

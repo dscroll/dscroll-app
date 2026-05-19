@@ -309,7 +309,12 @@ export default function AirdropPage() {
           walletAddress: address!,
           tokenid: tokenId.toString()
         };
-      }).filter(n => n.subname && n.subname.includes("@"));
+      }).filter(n => {
+        if (!n.subname || !n.subname.includes("@")) return false;
+        const parts = n.subname.split("@");
+        const tld = parts[parts.length - 1].toLowerCase();
+        return allowedTlds.has(tld);
+      });
 
       if (subnamesToSync.length > 0) {
         await syncRecords(subnamesToSync);
