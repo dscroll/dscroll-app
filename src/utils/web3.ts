@@ -2,6 +2,7 @@ import { http } from "wagmi";
 import {
   base,
   bsc,
+  baseSepolia,
 } from "wagmi/chains";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { CONFIG } from "@/config/config";
@@ -10,6 +11,7 @@ import { CONFIG } from "@/config/config";
 export const chainMap = {
   base,
   bsc,
+  basesepolia: baseSepolia
 } as const;
 
 // Supported chain objects array - dynamically mapped from CONFIG.blockchain.supportedChains
@@ -23,6 +25,7 @@ export const wagmiConfig = getDefaultConfig({
   transports: {
     [base.id]: http(process.env.NEXT_PUBLIC_BASE_RPC_URL || undefined),
     [bsc.id]: http(process.env.NEXT_PUBLIC_BNB_RPC_URL || undefined),
+    [baseSepolia.id]: http(process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL || undefined),
   },
   ssr: true,
 });
