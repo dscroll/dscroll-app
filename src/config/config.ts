@@ -20,8 +20,8 @@ export const CONFIG = {
     },
   },
   blockchain: {
-    defaultChain: "basesepolia",
-    supportedChains: ["basesepolia"] as const,
+    defaultChain: "base",
+    supportedChains: ["base"] as const,
   },
   supabase: {
     url: process.env.NEXT_PUBLIC_SUPABASE_URL || "",
