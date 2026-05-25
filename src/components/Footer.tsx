@@ -15,6 +15,7 @@ import {
 } from "@chakra-ui/react";
 import { FaTwitter, FaGithub, FaHeart } from "react-icons/fa";
 import { CONFIG } from "@/config/config";
+import Link from "next/link";
 
 export default function Footer() {
   const bgColor = useColorModeValue(
@@ -71,11 +72,31 @@ export default function Footer() {
           </VStack>
         </VStack>
 
-        {/* Center: Blockchain Info */}
-        <Text fontSize="xs" color={mutedColor} opacity={0.5}>
-          Supporting {CONFIG.blockchain.supportedChains.length} {CONFIG.blockchain.supportedChains.length === 1 ? "network" : "networks"} •
-          Default: {CONFIG.blockchain.defaultChain}
-        </Text>
+        {/* Center: Blockchain Info & Legal Links */}
+        <VStack spacing={2} align="center">
+          <Text fontSize="xs" color={mutedColor} opacity={0.5}>
+            Supporting {CONFIG.blockchain.supportedChains.length} {CONFIG.blockchain.supportedChains.length === 1 ? "network" : "networks"} • Default: {CONFIG.blockchain.defaultChain}
+          </Text>
+          <HStack spacing={3} fontSize="xs" color={mutedColor}>
+            <ChakraLink
+              as={Link}
+              href="/terms"
+              _hover={{ color: iconHover, textDecoration: "none" }}
+              transition="color 0.2s"
+            >
+              Terms & Conditions
+            </ChakraLink>
+            <Text opacity={0.3}>|</Text>
+            <ChakraLink
+              as={Link}
+              href="/privacy"
+              _hover={{ color: iconHover, textDecoration: "none" }}
+              transition="color 0.2s"
+            >
+              Privacy Policy
+            </ChakraLink>
+          </HStack>
+        </VStack>
 
         {/* Right: Social Links */}
         <HStack spacing={4}>
