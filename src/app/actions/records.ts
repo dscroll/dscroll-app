@@ -55,13 +55,54 @@ export async function saveRecord(data: RecordData) {
 
     // 2. Verify Ownership via SDK
     initializeSDK();
-    const nameInfo = await sdk.getNameInfo(subname);
     
-    if (!nameInfo || !nameInfo.exists) {
+    let exists = false;
+    try {
+      exists = await sdk.domainExists(subname);
+    } catch (err) {
+      console.warn("[saveRecord] sdk.domainExists failed, trying fallback check:", err);
+      const parts = subname.split("@");
+      const tld = parts[parts.length - 1];
+      try {
+        const network = sdk.getNetworkForTLD(tld);
+        exists = await sdk.resolver(network).nameExists(subname);
+      } catch (resolverErr) {
+        console.error("[saveRecord] Fallback existence check also failed:", resolverErr);
+        // Proceed and try to query registry directly
+        exists = true;
+      }
+    }
+
+    if (!exists) {
       return { success: false, error: "Subname not found on-chain." };
     }
 
-    if (nameInfo.owner.toLowerCase() !== walletAddress.toLowerCase()) {
+    let owner = "";
+    try {
+      const nameInfo = await sdk.getNameInfo(subname);
+      if (!nameInfo || !nameInfo.exists) {
+        return { success: false, error: "Subname not found on-chain." };
+      }
+      owner = nameInfo.owner;
+    } catch (sdkErr: any) {
+      console.warn("[saveRecord] sdk.getNameInfo failed, attempting fallback query:", sdkErr);
+      const parts = subname.split("@");
+      const tld = parts[parts.length - 1];
+      try {
+        const network = sdk.getNetworkForTLD(tld);
+        const registry = sdk.registry(network);
+        const tId = await registry.getTokenId(subname);
+        owner = await registry.ownerOf(tId);
+      } catch (fallbackErr: any) {
+        console.error("[saveRecord] Fallback query also failed:", fallbackErr);
+        return { 
+          success: false, 
+          error: `Failed to verify on-chain owner: ${fallbackErr.message || fallbackErr}` 
+        };
+      }
+    }
+
+    if (!owner || owner.toLowerCase() !== walletAddress.toLowerCase()) {
       return { success: false, error: "You are not the owner of this subname." };
     }
 

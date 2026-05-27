@@ -32,6 +32,7 @@ import {
   Progress,
   Link,
   Image,
+  Divider,
 } from "@chakra-ui/react";
 import { ethers, formatEther, parseEther } from "ethers";
 import { useRouter } from "next/navigation";
@@ -43,6 +44,7 @@ import Web3PageContainer from "@/components/Web3PageContainer";
 import { sdk, utils, initializeSDK, handleSDKError, reconnectRPC, getODudeNetworkFromChainId } from "@/lib/odude";
 import { isSubNameSupported } from "@/utils/domain";
 import { updateRecordSync, getRecord } from "@/app/actions/records";
+import { isChainSupported, getChainName } from "@/utils/web3";
 
 const MotionBox = motion(Box);
 
@@ -138,6 +140,7 @@ export default function SubNameManagementPage({ params }: PageProps) {
   const [isSettingPrimary, setIsSettingPrimary] = useState(false);
   const [odudeEnabled, setOdudeEnabled] = useState(false);
   const [updatingTokenUri, setUpdatingTokenUri] = useState(false);
+  const [fetchErrorMsg, setFetchErrorMsg] = useState<string | null>(null);
 
   // Transaction Modal State
   const { isOpen: isTxModalOpen, onOpen: onTxModalOpen, onClose: onTxModalClose } = useDisclosure();
@@ -164,9 +167,21 @@ export default function SubNameManagementPage({ params }: PageProps) {
     if (!subName) return;
 
     setLoading(true);
+    setFetchErrorMsg(null);
     try {
       reconnectRPC();
       initializeSDK();
+
+      if (chainId) {
+        const networkKey = getODudeNetworkFromChainId(chainId);
+        if (networkKey) {
+          try {
+            sdk.connectNetwork(networkKey);
+          } catch (err) {
+            console.warn(`Network ${networkKey} not supported by SDK:`, err);
+          }
+        }
+      }
 
       if (!utils.isValidSubName(subName)) {
         throw new Error("Invalid sub-name. Only sub-names (e.g. name@tld) can be managed.");
@@ -178,29 +193,71 @@ export default function SubNameManagementPage({ params }: PageProps) {
         return;
       }
 
-
-      const nameInfo = await sdk.getNameInfo(subName);
-
-      if (!nameInfo || !nameInfo.exists) {
-        throw new Error("Sub-name not found");
+      let exists = false;
+      try {
+        exists = await sdk.domainExists(subName);
+      } catch (err) {
+        console.warn("sdk.domainExists failed, trying fallback check:", err);
+        const parts = subName.split("@");
+        const tld = parts[parts.length - 1];
+        try {
+          const network = sdk.getNetworkForTLD(tld);
+          exists = await sdk.resolver(network).nameExists(subName);
+        } catch (resolverErr) {
+          console.error("Fallback existence check also failed:", resolverErr);
+          // If both fail, we can assume it might exist and try to fetch owner directly
+          exists = true;
+        }
       }
 
-      const owner = nameInfo.owner;
-      const tokenId = nameInfo.tokenId;
+      if (!exists) {
+        setSubNameExists(false);
+        setLoading(false);
+        return;
+      }
+
+      let owner = "";
+      let tokenId = BigInt(0);
+      let tokenUri = "";
+
+      try {
+        const nameInfo = await sdk.getNameInfo(subName);
+        if (!nameInfo || !nameInfo.exists) {
+          throw new Error("Sub-name not found");
+        }
+        owner = nameInfo.owner;
+        tokenId = BigInt(nameInfo.tokenId);
+        tokenUri = nameInfo.tokenURI || "";
+      } catch (sdkErr: any) {
+        console.warn("sdk.getNameInfo failed, attempting fallback query:", sdkErr);
+        const parts = subName.split("@");
+        const tld = parts[parts.length - 1];
+        try {
+          const network = sdk.getNetworkForTLD(tld);
+          const registry = sdk.registry(network);
+          const tId = await registry.getTokenId(subName);
+          tokenId = BigInt(tId);
+          owner = await registry.ownerOf(tId);
+          try {
+            tokenUri = await registry.tokenURI(tId);
+          } catch (uriErr) {
+            console.warn("Failed to fetch tokenURI in fallback:", uriErr);
+          }
+        } catch (fallbackErr: any) {
+          console.error("Fallback query also failed:", fallbackErr);
+          throw new Error(
+            `Failed to load subname owner. Registry query failed with error: ${fallbackErr.message || fallbackErr}`
+          );
+        }
+      }
+
       const isOwner = address ? owner?.toLowerCase() === address.toLowerCase() : false;
 
       setSubNameExists(true);
 
-      let tokenUri = "";
-      try {
-        tokenUri = await sdk.registry().tokenURI(tokenId);
-      } catch (uriErr) {
-        console.warn("Failed to fetch tokenURI:", uriErr);
-      }
-
       setSubNameData({
         name: subName,
-        tokenId: BigInt(tokenId),
+        tokenId,
         owner,
         price: BigInt(0),
         commission: BigInt(0),
@@ -216,16 +273,18 @@ export default function SubNameManagementPage({ params }: PageProps) {
           .catch(err => console.error("Failed to update record sync:", err));
       }
 
-      // Fetch Primary Name
-      try {
-        const reverseRecord = await sdk.resolver().getReverseRecord(address!);
-        if (reverseRecord && reverseRecord.exists) {
-          setPrimaryName(reverseRecord.primaryName);
-        } else {
-          setPrimaryName(null);
+      // Fetch Primary Name (only if address is defined)
+      if (address) {
+        try {
+          const reverseRecord = await sdk.resolver().getReverseRecord(address);
+          if (reverseRecord && reverseRecord.exists) {
+            setPrimaryName(reverseRecord.primaryName);
+          } else {
+            setPrimaryName(null);
+          }
+        } catch (revErr) {
+          console.warn("Failed to fetch reverse record:", revErr);
         }
-      } catch (revErr) {
-        console.warn("Failed to fetch reverse record:", revErr);
       }
 
       // Fetch Odude status
@@ -237,9 +296,10 @@ export default function SubNameManagementPage({ params }: PageProps) {
       } catch (err) {
         console.warn("Failed to fetch record status:", err);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error in fetchSubNameData:", error);
       const handledError = handleSDKError(error, "fetching data");
+      setFetchErrorMsg(handledError.message);
       if (handledError.message.includes("not found")) {
         setSubNameExists(false);
       } else {
@@ -257,10 +317,10 @@ export default function SubNameManagementPage({ params }: PageProps) {
   };
 
   useEffect(() => {
-    if (isConnected && subName) {
+    if (isConnected && subName && isChainSupported(chainId)) {
       fetchSubNameData();
     }
-  }, [isConnected, subName, address]);
+  }, [isConnected, subName, address, chainId]);
 
 
 
@@ -495,10 +555,123 @@ export default function SubNameManagementPage({ params }: PageProps) {
 
   if (!subNameData?.isOwner) return (
     <Web3PageContainer>
-      <Flex justify="center" align="center" minH="400px">
-        <VStack spacing={6}>
-          <Heading size="lg" color="red.500">Access Denied</Heading>
-          <Button onClick={() => router.back()}>Go Back</Button>
+      <Flex justify="center" align="center" minH="500px" py={10}>
+        <VStack spacing={6} w="full" maxW="650px" mx="auto">
+          {/* Header */}
+          <VStack spacing={2} textAlign="center">
+            <Flex 
+              bg="red.50" 
+              _dark={{ bg: "red.900/20" }} 
+              color="red.500" 
+              p={4} 
+              borderRadius="full" 
+              boxShadow="0 10px 20px -5px rgba(245, 101, 101, 0.4)"
+            >
+              <Icon as={FiLock} boxSize={10} />
+            </Flex>
+            <Heading size="lg" fontWeight="900" color="red.500">Access Denied</Heading>
+            <Text color="gray.500" fontSize="sm">
+              You do not have ownership rights to manage this sub-name or there was an error reading the contract.
+            </Text>
+          </VStack>
+
+          {/* Diagnostic Card */}
+          <Card variant="outline" w="full" borderRadius="3xl" border="1px solid" borderColor="red.150" _dark={{ borderColor: "red.900/40" }} overflow="hidden" boxShadow="xl">
+            <CardBody p={6}>
+              <VStack align="stretch" spacing={4}>
+                <Heading size="xs" color="gray.500" textTransform="uppercase" letterSpacing="widest">
+                  Diagnostic Information
+                </Heading>
+                
+                <Divider />
+
+                <SimpleGrid columns={2} spacing={4} fontSize="sm">
+                  <Box>
+                    <Text fontWeight="bold" color="gray.400" fontSize="2xs" letterSpacing="wider">TARGET SUB-NAME</Text>
+                    <Text fontSize="md" fontWeight="black" color="brand.400" mt={1}>{subName}</Text>
+                  </Box>
+                  
+                  <Box>
+                    <Text fontWeight="bold" color="gray.400" fontSize="2xs" letterSpacing="wider">ON-CHAIN OWNER</Text>
+                    <Text fontSize="xs" fontFamily="mono" mt={1} isTruncated title={subNameData?.owner || "Not Loaded"}>
+                      {subNameData?.owner || "Not Loaded"}
+                    </Text>
+                  </Box>
+                  
+                  <Box>
+                    <Text fontWeight="bold" color="gray.400" fontSize="2xs" letterSpacing="wider">YOUR CONNECTED WALLET</Text>
+                    <Text fontSize="xs" fontFamily="mono" mt={1} isTruncated title={address || "Not Connected"}>
+                      {address || "Not Connected"}
+                    </Text>
+                  </Box>
+                  
+                  <Box>
+                    <Text fontWeight="bold" color="gray.400" fontSize="2xs" letterSpacing="wider">ACTIVE BLOCKCHAIN</Text>
+                    <Box mt={1}>
+                      <Badge colorScheme="blue" px={2} py={0.5} borderRadius="md">
+                        {chainId ? getChainName(chainId) : "Unknown"} (ID: {chainId || "None"})
+                      </Badge>
+                    </Box>
+                  </Box>
+                </SimpleGrid>
+
+                {/* Error Box if available */}
+                {fetchErrorMsg && (
+                  <Box 
+                    p={4} 
+                    bg="red.50" 
+                    borderRadius="xl" 
+                    border="1px solid" 
+                    borderColor="red.150" 
+                    _dark={{ bg: "red.950/30", borderColor: "red.900/50" }}
+                  >
+                    <VStack align="start" spacing={1}>
+                      <Text fontSize="2xs" fontWeight="black" color="red.500" letterSpacing="wider">UNDERLYING ON-CHAIN EXCEPTION</Text>
+                      <Text fontSize="xs" fontFamily="mono" color="red.600" _dark={{ color: "red.300" }} wordBreak="break-all">
+                        {fetchErrorMsg}
+                      </Text>
+                    </VStack>
+                  </Box>
+                )}
+
+                {/* Ownership Mismatch Status */}
+                <Box 
+                  p={4} 
+                  bg={address && subNameData?.owner && address.toLowerCase() === subNameData.owner.toLowerCase() ? "green.50" : "orange.50"} 
+                  _dark={{ bg: address && subNameData?.owner && address.toLowerCase() === subNameData.owner.toLowerCase() ? "green.950/20" : "orange.950/20" }} 
+                  borderRadius="xl"
+                >
+                  <Text fontSize="xs" fontWeight="bold" color={address && subNameData?.owner && address.toLowerCase() === subNameData.owner.toLowerCase() ? "green.600" : "orange.600"}>
+                    {(() => {
+                      if (!address) return "Please connect your wallet first.";
+                      if (!subNameData?.owner) return "Ownership data could not be verified due to the contract revert.";
+                      if (address.toLowerCase() !== subNameData.owner.toLowerCase()) {
+                        return "Mismatch: Your connected wallet is not the registered owner of this domain name on this network.";
+                      }
+                      return "Connected wallet matches the registered owner.";
+                    })()}
+                  </Text>
+                </Box>
+              </VStack>
+            </CardBody>
+          </Card>
+
+          {/* Action buttons */}
+          <HStack w="full" spacing={4}>
+            <Button flex={1} variant="outline" size="md" borderRadius="xl" onClick={() => router.back()}>
+              Go Back
+            </Button>
+            <Button 
+              flex={1} 
+              colorScheme="red" 
+              size="md" 
+              borderRadius="xl" 
+              onClick={fetchSubNameData}
+              boxShadow="0 4px 12px rgba(245, 101, 101, 0.2)"
+            >
+              Retry Connection
+            </Button>
+          </HStack>
         </VStack>
       </Flex>
     </Web3PageContainer>
